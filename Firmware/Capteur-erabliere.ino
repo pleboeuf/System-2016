@@ -99,8 +99,8 @@ int ssrRelayState = false;
 int motorState = A0; // input pour Pompe marche/arrêt
 
 // Variables liés à la pompe
-bool oldState = true;
-bool currentState = false;
+bool PumpOldState = true;
+bool PumpCurrentState = true;
 unsigned long changeTime = 0;
 
 // Variables liés aux valves
@@ -184,7 +184,7 @@ class A0State {
       System.ticksDelay(50000*System.ticksPerMicrosecond()); // Debounce 50 milliseconds
       Serial.print("Pompe ");
       // enregistre l'état et le temps
-      currentState = digitalRead(A0);
+      PumpCurrentState = digitalRead(A0);
       changeTime = millis();
       if (currentState == false){
         Serial.println("On");
@@ -229,6 +229,7 @@ void setup() {
     pinMode(ssrRelay, OUTPUT);
     digitalWrite(led, LOW);
     digitalWrite(ssrRelay, LOW);
+    PumpCurrentState = digitalRead(A0);
     for (int i=0; i <= 3; i++) {
         pinMode(ValvePos_pin[i], INPUT_PULLUP);
     }
@@ -258,14 +259,14 @@ void loop() {
     digitalWrite(led, LOW);
 
     // Publication de l'état de la pompe s'il y a eu changement
-    if (currentState != oldState){
-      oldState = currentState;
-      if (currentState == true){
+    if (PumpCurrentState != PumpOldState){
+      PumpOldState = PumpCurrentState;
+      if (PumpCurrentState == true){
         pumpEvent = evPompe_T1;
       } else {
         pumpEvent = evPompe_T2;
       }
-      pushToPublishQueue(pumpEvent, currentState, changeTime);
+      pushToPublishQueue(pumpEvent, PumpCurrentState, changeTime);
     }
 // Pour permettre la modification de maxPublishDelay par le nuage
     maxPublishDelay = maxPublishInterval * minute;
@@ -287,9 +288,9 @@ void loop() {
     }
 // Publié les événements se trouvant dans le buffer
     if(buffLen > 0){
-          Serial.printlnf("Buffer = %u, Cloud = %s", buffLen, (Particle.connected() ? "true" : "false"));
-          bool success = publishQueuedEvents();
-          Serial.printlnf("Publishing = %u, Status: %s", readPtr - 1, (success ? "Fait" : "Pas Fait"));
+        Serial.printlnf("Buffer = %u, Cloud = %s", buffLen, (Particle.connected() ? "true" : "false"));
+        bool success = publishQueuedEvents();
+        Serial.printlnf("Publishing = %u, Status: %s", readPtr - 1, (success ? "Fait" : "Pas Fait"));
     }
     killTime(samplingInterval); // Maintient la boucle sur une base de 1 second
 }
