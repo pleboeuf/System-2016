@@ -137,7 +137,6 @@ int pumpEvent = 0;
 
 // Autre variables
 String myDeviceName = "";
-bool NuageDisponible = false;
 /*
 // handler to receive the module name
 */
@@ -288,19 +287,9 @@ void loop() {
     }
 // Publié les événements se trouvant dans le buffer
     if(buffLen > 0){
-        if(NuageDisponible = false && Particle.connected()){
-          // Just connected, wait a bit
-          delay(10000);
-          NuageDisponible = true;
-        }
-        if (Particle.connected()){
-          NuageDisponible = true;
           Serial.printlnf("Buffer = %u, Cloud = %s", buffLen, (Particle.connected() ? "true" : "false"));
           bool success = publishQueuedEvents();
           Serial.printlnf("Publishing = %u, Status: %s", readPtr - 1, (success ? "Fait" : "Pas Fait"));
-        } else {
-          NuageDisponible = false;
-        }
     }
     killTime(samplingInterval); // Maintient la boucle sur une base de 1 second
 }
