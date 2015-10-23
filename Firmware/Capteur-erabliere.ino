@@ -34,13 +34,13 @@ De cette façon les 100 à 150 dernier événements seront conservé en cas de p
 Afin d'optimiser l'espace requis, les données seront de type entier (integer ou long).
 Les nom d'événements sont remplacer par leur index dans l'array eventName.
 Les données sont organisé dans une structure "Event" et stocké dans un array de ces structures.
-20 bytes sont utilisés par événement. On peut donc sauver environ 4000 / 20 = 200 événements.
+9 bytes sont utilisés par événement. On peut donc sauver environ 4000 / 9 = 440 événements.
 Les événements sont stocké au fur et à mesure de leur production. Il seront publié séquenciellement
 indépendamment de leur production.
 */
 
 SYSTEM_THREAD(ENABLED);
-STARTUP(WiFi.selectAntenna(ANT_INTERNAL));
+STARTUP(WiFi.selectAntenna(ANT_EXTERNAL));
 STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 
 #define minute 60000UL            // 60000 millisecond per minute
@@ -50,9 +50,10 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 #define debounceDelay 50    // Debounce time for valve position readswitch
 #define fastSampling  1   // in second
 #define slowSampling  2    // in second
-#define minDistChange 1.66       // Minimum change in distance to publish an event (1/16")
-#define minTempChange 0.5      // Minimum temperature change to publish an event
 #define numReadings 10           // Number of readings to average for filtering
+#define minDistChange 1.7 * numReadings      // Minimum change in distance to publish an event (1/16")
+#define minTempChange 0.5 * numReadings      // Minimum temperature change to publish an event
+#define maxRangeUS100 2500 // Distance maximale valide pour le captgeur
 
 // Nom des indices du tableau eventName
 #define evPompe_T1 0
@@ -81,9 +82,9 @@ String eventName[] = {
 };
 
 struct Event{
-  unsigned int noSerie;
-  int namePtr;
-  int eData;
+  int16_t noSerie;
+  uint8_t namePtr;
+  int16_t eData;
   unsigned long eTime;
 };
 const int buffSize = 100;
@@ -113,7 +114,6 @@ unsigned int HighLen = 0;
 unsigned int LowLen  = 0;
 int Temp = 0;
 int prev_Temp = 0;
-char Temp_str[20];
 int allTempReadings[numReadings];
 
 // Variables liés à la mesure de distance
@@ -134,6 +134,7 @@ unsigned long lastTime = 0UL;
 char publishString[100];
 retained unsigned noSerie = 0; //Mettre en Backup RAM
 int pumpEvent = 0;
+bool connWasLost = false;
 
 // Autre variables
 String myDeviceName = "";
@@ -186,7 +187,7 @@ class A0State {
       // enregistre l'état et le temps
       PumpCurrentState = digitalRead(A0);
       changeTime = millis();
-      if (currentState == false){
+      if (PumpCurrentState == false){
         Serial.println("On");
       } else {
         Serial.println("Off");
@@ -204,25 +205,24 @@ void setup() {
 // Attendre la connection au nuage
     Serial.println("En attente... ");
     if (waitFor(Particle.connected, 10000)) {
-          Serial.println("Connecté au nuage. Good!");
-    }
-    /*int i = 0;
-    while(!Particle.connected()){
-         Serial.println("En attente... " + String(5 - i));
-    }*/
-//    Serial.println("Connecté au nuage. Good!");
+        if(Particle.connected()){
+            Serial.println("Connecté au nuage. :)");
+            /*//Quel est mon nom?
+                delay(3000);
+                Particle.subscribe("spark/", nameHandler);
+                Particle.publish("spark/device/name");
 
-/*//Quel est mon nom?
-    delay(3000);
-    Particle.subscribe("spark/", nameHandler);
-    Particle.publish("spark/device/name");
-
-// Attendre la réception du nom
-    while(myDeviceName.length() == 0){
-        delay(1000);
-        Serial.print(".");
+            // Attendre la réception du nom
+                while(myDeviceName.length() == 0){
+                    delay(1000);
+                    Serial.print(".");
+                }
+                Serial.println("\nMon nom est: " + myDeviceName + "\n");*/
+        } else {
+            Serial.println("Pas de connexion au nuage. :( ");
+        }
     }
-    Serial.println("\nMon nom est: " + myDeviceName + "\n");*/
+
 
 // Initialisation
     pinMode(led, OUTPUT);
@@ -276,8 +276,8 @@ void loop() {
     if (now - lastPublish > maxPublishDelay)
         {
             lastPublish = now;
-            pushToPublishQueue(evDistance, dist_mm, now);
-            pushToPublishQueue(evTemperature, Temp, now);
+            pushToPublishQueue(evDistance, (int)(dist_mm / numReadings), now);
+            pushToPublishQueue(evTemperature, (int)(Temp/ numReadings), now);
             samplingInterval = slowSampling;   // Les mesure sont stable, réduire la fréquence de mesure.
         }
 
@@ -307,19 +307,13 @@ void ReadDistance_US100(){
         LowLen  = Serial1.read();                   // Low byte of distance
         lastReading = HighLen*256 + LowLen;          // Combine the two bytes
 //        Len_mm  = (HighLen*256 + LowLen)/25.4;    // Calculate the distance in inch
-        if((lastReading > 1) && (lastReading < 2500))       // normal distance should between 1mm and 2500 mm (1mm, 2,5m)
-        {
+        if((lastReading > 1) && (lastReading < maxRangeUS100)){       // normal distance should between 1mm and 2500 mm (1mm, 2,5m)
             dist_mm = AvgDistReading(lastReading); // Average the distance readings
-            Serial.printlnf("Dist.: %dmm, Temp.:%dC. now= %d, lastPublish= %d, RSSI= %d", dist_mm, Temp, now, lastPublish, WiFi.RSSI());
-            if ( (abs(dist_mm - prev_dist_mm) > minDistChange) || ( abs(Temp - prev_Temp) > minTempChange) ){         // Publish event in case of a change in temperature
+            Serial.printlnf("Dist.: %dmm, now= %d, lastPublish= %d, RSSI= %d", (int)(dist_mm / numReadings), now, lastPublish, WiFi.RSSI());
+            if (abs(dist_mm - prev_dist_mm) > minDistChange) ){         // Publish event in case of a change in temperature
                     lastPublish = now;                               // reset the max publish delay counter.
-                    pushToPublishQueue(evDistance, dist_mm, now);
+                    pushToPublishQueue(evDistance, (int)(dist_mm / numReadings), now);
                     prev_dist_mm = dist_mm;
-                    delay(1000);
-                    pushToPublishQueue(evTemperature, Temp, now);
-                    prev_Temp = Temp;
-                    /*Serial.printlnf("Événement: Changement distance ou de température - ");
-                    Serial.println(String(dist_mm));*/
                     samplingInterval = fastSampling;   //Measurements NOT stable, increase the sampling frequency
                 }
 
@@ -349,7 +343,13 @@ void Readtemp(){
         if((Temp45 > 1) && (Temp45 < 130))   //the valid range of received data is (1, 130)
         {
             Temp = AvgTempReading(Temp45 - 45);
-            sprintf(Temp_str, "%f", Temp);
+            Serial.printlnf("Temp.:%dC now= %d, lastPublish= %d", Temp, now, lastPublish);
+            if (abs(Temp - prev_Temp) > minTempChange){         // Publish event in case of a change in temperature
+                    lastPublish = now;                               // reset the max publish delay counter.
+                    pushToPublishQueue(evTemperature, (int)(Temp/ numReadings), now);
+                    prev_Temp = Temp;
+                    samplingInterval = fastSampling;   //Measurements NOT stable, increase the sampling frequency
+                }
         }
     }
 }
@@ -369,7 +369,7 @@ int AvgDistReading(int thisReading){
     Avg += thisReading; //including the last one
     /*Serial.print(" avg= ");
     Serial.println(Avg / numReadings);*/
-    return (Avg / numReadings);
+    return (Avg); // Avg sera divisé par numReadings au moment de la publication
 }
 
 // This routine return a running average of the last "numReadings" temperature reading to filter noise.
@@ -377,34 +377,41 @@ int AvgTempReading(int thisReading){
     long Avg = 0;
     for (int i = 1; i < numReadings; i++){
         allTempReadings[i-1] = allTempReadings[i]; //Shift all readings
+        // Serial.print(allTempReadings[i-1]);
+        // Serial.print(" ");
         Avg += allTempReadings[i-1]; //Total of readings except the last one
     }
     allTempReadings[numReadings - 1] = thisReading; //Current reading in the last position
+    // Serial.print(allTempReadings[numReadings-1]);
+    // Serial.print("   ");
     Avg += thisReading; //total including the last one
-    return (Avg / numReadings);
+    // Serial.print(" avg= ");
+    // Serial.println(Avg);
+    return (Avg); // Avg sera divisé par numReadings au moment de la publication
 }
+
 
 // Check the state of the valves position reedswitch
 void CheckValvePos(){
-    bool currentState;
+    bool valveCurrentState;
     String stateStr;
 
     for (int i=0; i <= 3; i++) {
-        currentState = digitalRead(ValvePos_pin[i]);
-        if (ValvePos_state[i] != currentState)
+        valveCurrentState = digitalRead(ValvePos_pin[i]);
+        if (ValvePos_state[i] != valveCurrentState)
         {
             delay(debounceDelay);  // Debounce time
             // time_t time = Time.now();
-            currentState = digitalRead(ValvePos_pin[i]);
-            ValvePos_state[i] = currentState;
+            valveCurrentState = digitalRead(ValvePos_pin[i]);
+            ValvePos_state[i] = valveCurrentState;
             now = millis();
-            if (currentState == true){
+            if (valveCurrentState == true){
                 stateStr = "Ouvert";
             } else {
                 stateStr = "Fermé";
             }
             Serial.println(eventName[ValvePos_Name[i]] + ": " + stateStr );
-            pushToPublishQueue(ValvePos_Name[i], currentState, now);
+            pushToPublishQueue(ValvePos_Name[i], valveCurrentState, now);
         }
     }
 }
@@ -471,17 +478,25 @@ bool pushToPublishQueue(int nameNo, int eData, unsigned long eTime){
 
 // Publie un événement stocké en mémoire
 bool publishQueuedEvents(){
-  bool publishSuccess = false;
-  struct Event thisEvent = {};
-  Serial.println("<<<< publishQueuedEvents:::");
-  thisEvent = peekEvent();
-  if (sizeof(thisEvent) == 0){
-    return publishSuccess; // Rien à publié
-  }
-  publishSuccess = Particle.publish(eventName[thisEvent.namePtr], makeJSON(thisEvent.noSerie, thisEvent.eData, thisEvent.eTime), 60, PRIVATE);
-  if (publishSuccess){
-    readEvent(); // Avance le pointeur de lecture
-  }
+    bool publishSuccess = false;
+    struct Event thisEvent = {};
+    Serial.println("<<<< publishQueuedEvents:::");
+    thisEvent = peekEvent();
+    if (sizeof(thisEvent) == 0){
+        return publishSuccess; // Rien à publié
+    }
+    if(Particle.connected()){
+        if (connWasLost){
+          connWasLost =  false;
+          delay(2000); // Gives some time to avoid loosing events
+        }
+        publishSuccess = Particle.publish(eventName[thisEvent.namePtr], makeJSON(thisEvent.noSerie, thisEvent.eData, thisEvent.eTime), 60, PRIVATE);
+        if (publishSuccess){
+        readEvent(); // Avance le pointeur de lecture
+        }
+    } else {
+     connWasLost = true;
+    }
   return publishSuccess;
 }
 
