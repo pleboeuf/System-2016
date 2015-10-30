@@ -20,7 +20,7 @@ les pompes.
 
 *À faire:*
 
-- Faire une version avec les fonctionnalités de base sans code de capteur. Idéalement une librarie
+- Faire une version avec les fonctionnalités de base sans code de capteur
 - Mesure de la température interne
 - Contrôle du circuit de chauffage
 - Mesure de la température externe si le capteur utilisé n'est pas le US-100
