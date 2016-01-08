@@ -1,33 +1,3 @@
-// Allocation de base des broches du module "Particle Photon" utilisé par le code suivant
-//
-// Photon Pin	  Fonction		                       Location                |Capteur Standard	|Capteur Robuste	|Capteur On / Off	|Commun
-//      D6	       SSR Relay 	                           Ext.	                        	                   	                  O
-//      A0	       Signal moteur opto couplé - IAC5A	    Onboard	                    	                   	                  O
-//      A1	       Signal moteur par Current xformer	    Ext.                           	                                      O
-//      A2	       Valve 1A	                                Ext.                       O                      O
-//      A3	       Valve 1B	                                Ext.	                   O	                  O
-//      A4	       Valve 2A	                                Ext.	                   O	                  O
-//      A5	       Valve 2B	                                Ext.	                   O	                  O
-//      D2 (pwm)   RGB Led Red	                            Onboard	                   O	                  O	                  O	             O
-//      D1 (pwm)   RGB Led Green	                        Onboard	                   O	                  O	                  O	             O
-//      D0 (pwm)   RGB Led Blue	                            Onboard	                   O	                  O	                  O	             O
-//      D7	       Activity Blue LED	                    Onboard	                   O	                  O	                  O	             O
-//      3V3	       US-100 Pin 1 - Vcc	                    Onboard	                   O
-//      Tx	      US-100 Pin 2 - Trig /  Tx	                Onboard	                   O
-//      Rx	      US-100 Pin 3 - Echo / Rx	                Onboard	                   O
-//      Gnd	      US-100 Pin 4 - Gnd	                    Onboard	                   O
-//      Gnd	      US-100 Pin 5 - Gnd	                    Onboard	                   O
-//      3V3	      XL-Max Sonar MB7092 Pin 1 - Nc or High	Ext.	                        	                  O
-//      D5	      XL-Max Sonar MB7092 Pin 2 - Pulse out	    Ext.	                        	                  O
-//      Tx	      XL-Max Sonar MB7092 Pin 4 - Trig 20uS	    Ext.	                                              O
-//      Rx	      XL-Max Sonar MB7092 Pin 5 - Serial out	Ext.	                        	                  O
-//      Gnd	      XL-Max Sonar MB7092 Pin 7 - Gnd	        Ext.	                                              O
-//      D4	      Dallas 18b20 Temperature sensor	        Onboard / Ext.	           O	                  O	                  O	             O
-//      D3	      Heating circuit. Power control	        Onboard	                     	                  O
-//      Vbat	  Memory backup battery CR2032	            Onboard	                   O	                  O	                  O	             O
-//
-// The US-100 module WITH jumper cap on the back.
-
 /*
 Tous les événements seront stocké dans dans un buffer circulaire en espace mémoire protégé par batterie.
 De cette façon les 100 à 150 dernier événements seront conservé en cas de perte de réseau.
@@ -39,83 +9,16 @@ Les événements sont stocké au fur et à mesure de leur production. Il seront 
 indépendamment de leur production.
 */
 
-SYSTEM_THREAD(ENABLED);
-STARTUP(WiFi.selectAntenna(ANT_EXTERNAL));
-STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
-
-#define minute 60000UL            // 60000 millisecond per minute
-#define second 1000UL             // 1000 millisecond per sesond
-#define unJourEnMillis (24 * 60 * 60 * second)
-#define baseLoopTime  206      //Estimated loop time in millisecond
-//#define debounceDelay 50    // Debounce time for valve position readswitch
-#define fastSampling  1   // in second
-#define slowSampling  5    // in second
-#define numReadings 10           // Number of readings to average for filtering
-/*#define minDistChange 1.7 * numReadings      // Minimum change in distance to publish an event (1/16")
-#define minTempChange 0.5 * numReadings      // Minimum temperature change to publish an event
-#define maxRangeUS100 2500 // Distance maximale valide pour le captgeur*/
-
-// Nom des indices du tableau eventName
-#define evPompe_T1 0
-#define evPompe_T2 1
-#define evDistance 2
-#define evTemperature_US100 3
-#define evOutOfRange 4
-#define evValve_A 5
-#define evValve_B 6
-#define evValve_C 7
-#define evValve_D 8
-#define evRelais 9
-#define evVacuum 10
-#define evDebit 11
-#define evVolume 12
-#define evPressionAtmospherique 13
-#define evTempInterne 14
-#define evTempExterne 15
-
-// Variables lié aux événements
-String eventName[] = {
-  "Pompe T1",
-  "Pompe T2",
-  "Distance",
-  "Temperature US100",
-  "Hors portée: ",
-  "Valve A",
-  "Valve B",
-  "Valve C",
-  "Valve D",
-  "Relais",
-  "Vacuum",
-  "Débit",
-  "Volume",
-  "Pression Atmosphérique",
-  "Température interne",
-  "Température externe"
-};
-
-// Structure définissant un événement
-struct Event{
-  int16_t noSerie; // Le numéro de série est généré automatiquement
-  uint8_t namePtr; // Pointeur dans l'array des noms d'événement. (Pour sauver de l'espace NVRAM)
-  int16_t eData;   // Données pour cet événement. Entier 16 bits. Pour sauvegarder des données en point flottant
-                   // multiplié d'abord la donnée par un facteur (1000 par ex.) en convertir en entier.
-                   // Il suffira de divisé la données au moment de la réception de l'événement.
-  unsigned long eTime; // Temps depuis la mise en marche du capteur. Overflow après 49 jours.
-};
-const int buffSize = 300; // Nombre max d'événements que l'on peut sauvegarder
-unsigned int buffLen = 0;
-retained unsigned int writePtr = 0;
-retained unsigned int readPtr = 0;
-retained struct Event eventBuffer[buffSize];
 
 // Pin pour l' I/O
 int RGBled_Red = D0;
 int RGBled_Green = D1;
 int RGBLed_Blue = D2;
 int led = D7; // Feedback led
-int ssrRelay = D6; // Solid state relay
+
+/*int ssrRelay = D6; // Solid state relay
 int ssrRelayState = false;
-int motorState = A0; // input pour Pompe marche/arrêt
+int motorState = A0; // input pour Pompe marche/arrêt*/
 
 // Variables liés à la pompe
 /*bool PumpOldState = true;
@@ -149,9 +52,9 @@ unsigned long maxPublishDelay = maxPublishInterval * minute;
 unsigned long lastTime = 0UL;
 
 // Variables liés aux publications
-char publishString[buffSize];
+/*char publishString[buffSize];
 retained unsigned noSerie = 0; //Mettre en Backup RAM
-int pumpEvent = 0;
+int pumpEvent = 0;*/
 bool connWasLost = false;
 
 // Autre variables

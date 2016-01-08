@@ -408,7 +408,7 @@ int AvgTempReading(int thisReading){
     long AvgTemp = 0;
     for (int i = 1; i < numReadings; i++){
         allTempReadings[i-1] = allTempReadings[i]; //Shift all readings
-        Avg += allTempReadings[i-1]; //Total of readings except the last one
+        AvgTemp += allTempReadings[i-1]; //Total of readings except the last one
     }
     allTempReadings[numReadings - 1] = thisReading; //Current reading in the last position
     AvgTemp += thisReading; //total including the last one
