@@ -1,6 +1,8 @@
 // This #include statement was automatically added by the Particle IDE.
-#include "OneWire/OneWire.h"
-#include "spark-dallas-temperature/spark-dallas-temperature.h"
+#include "OneWire.h"
+#include "spark-dallas-temperature.h"
+/*#include "DS18B20/Particle-OneWire.h"*/
+/*#include "DS18B20/DS18B20.h"*/
 
 // Photon Pin	Fonction		                    Location                |Capteur Standard	|Capteur Robuste	|Capteur On / Off	|Commun
 //      D6	     SSR Relay 	                         Ext.	                        	                   	                  O
@@ -139,6 +141,7 @@ int Temp = 0;
 int prev_Temp = 0;
 int prev_TempInterne = 0;
 int allTempReadings[numReadings];
+
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensor(&oneWire);
 
@@ -497,6 +500,7 @@ int AvgTempReading(int thisReading){
 
 double readDS18b20temp(){
     double temperature = -99.0;
+    sensor.begin();
     sensor.requestTemperatures();
     // delay(200);
     temperature = sensor.getTempCByIndex(0);
