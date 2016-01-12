@@ -1,8 +1,6 @@
 // This #include statement was automatically added by the Particle IDE.
-#include "OneWire.h"
 #include "spark-dallas-temperature.h"
-/*#include "DS18B20/Particle-OneWire.h"*/
-/*#include "DS18B20/DS18B20.h"*/
+#include "OneWire.h"
 
 // Photon Pin	Fonction		                    Location                |Capteur Standard	|Capteur Robuste	|Capteur On / Off	|Commun
 //      D6	     SSR Relay 	                         Ext.	                        	                   	                  O
@@ -36,7 +34,7 @@
 
 /*
 Tous les événements seront stocké dans dans un buffer circulaire en espace mémoire protégé par batterie.
-De cette façon les 100 à 150 dernier événements seront conservé en cas de perte de réseau.
+De cette façon les 300 derniers événements seront conservés en cas de perte de réseau.
 Afin d'optimiser l'espace requis, les données seront de type entier (integer ou long).
 Les nom d'événements sont remplacer par leur index dans l'array eventName.
 Les données sont organisé dans une structure "Event" et stocké dans un array de ces structures.
@@ -45,7 +43,7 @@ Les événements sont stocké au fur et à mesure de leur production. Il seront 
 indépendamment de leur production.
 */
 
-SYSTEM_THREAD(ENABLED);
+// SYSTEM_THREAD(ENABLED);
 STARTUP(WiFi.selectAntenna(ANT_EXTERNAL));
 STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 
@@ -55,22 +53,22 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 #define unJourEnMillis (24 * 60 * 60 * second)
 #define baseLoopTime  206      //Estimated loop time in millisecond
 #define debounceDelay 50    // Debounce time for valve position readswitch
-#define fastSampling  1   // in second
-#define slowSampling  5    // in second
+#define fastSampling  1000UL   // in milliseconds
+#define slowSampling  5000UL    // in milliseconds
 #define numReadings 10           // Number of readings to average for filtering
-#define minDistChange 1.7 * numReadings      // Minimum change in distance to publish an event (1/16")
+#define minDistChange 2.0 * numReadings      // Minimum change in distance to publish an event (1/16")
 #define minTempChange 0.5 * numReadings      // Minimum temperature change to publish an event
 #define maxRangeUS100 2500 // Distance maximale valide pour le captgeur
 #define maxRangeMB7389 4999 // Distance maximale valide pour le captgeur
 #define ONE_WIRE_BUS D4 //senseur sur D4
-#define DallasSensorResolution 9 // Résolution de lecture de température
+#define DallasSensorResolution 11 // Résolution de lecture de température
 
 
 // Nom des indices du tableau eventName
 #define evPompe_T1 0
 #define evPompe_T2 1
 #define evDistance 2
-#define evTemperature 3
+#define evTemperature_US100 3
 #define evOutOfRange 4
 #define evValve_A 5
 #define evValve_B 6
@@ -90,7 +88,7 @@ String eventName[] = {
   "Pompe T1",
   "Pompe T2",
   "Distance",
-  "Temperature",
+  "Temperature US100",
   "Hors portée: ",
   "Valve A",
   "Valve B",
@@ -120,7 +118,7 @@ retained Event eventBuffer[buffSize];
 // Pin pour l' I/O
 int led = D7; // Feedback led
 int ssrRelay = D6; // Solid state relay
-int ssrRelayState = false;
+int RelayState = false;
 int motorState = A0; // input pour Pompe marche/arrêt
 int heater = D3; //Contrôle le transistor du chauffage
 
@@ -137,13 +135,15 @@ int ValvePos_Name[] = {evValve_A, evValve_B, evValve_C, evValve_D};
 // Variables liés à la mesure de Température
 unsigned int HighLen = 0;
 unsigned int LowLen  = 0;
-int Temp = 0;
-int prev_Temp = 0;
+int TempUS100 = 0;
+int prev_TempUS100 = 0;
+int prev_TempExterne = 0;
 int prev_TempInterne = 0;
 int allTempReadings[numReadings];
-
 OneWire oneWire(ONE_WIRE_BUS);
-DallasTemperature sensor(&oneWire);
+DallasTemperature ds18b20Sensors(&oneWire);
+DeviceAddress enclosureThermometer, outsideThermometer;
+volatile int ds18b20Count = 0;
 
 // Variables liés à la mesure de distance
 int dist_mm  = 0;
@@ -155,6 +155,7 @@ unsigned long lastPublish;
 unsigned long now;
 unsigned long lastSync = millis();
 unsigned int samplingInterval = fastSampling;
+unsigned long nextSampleTime = 0;
 int maxPublishInterval = 10;
 unsigned long maxPublishDelay = maxPublishInterval * minute;
 unsigned long lastTime = 0UL;
@@ -166,13 +167,20 @@ int pumpEvent = 0;
 bool connWasLost = false;
 
 // Autre variables
-String myDeviceName = "";
+bool MB7389Valid = false;
+String Dist_MB7389Str;
+int MB7389latestReading = 0;
+int R = 82;
+int CR = 13;
+
+
 /*
-// handler to receive the module name
+   handler to receive the module name
 */
+String myDeviceName = "";
 void nameHandler(const char *topic, const char *data) {
     myDeviceName =  String(data);
-    Serial.println("received " + String(topic) + ": " + String(data));
+    /*Serial.println("received " + String(topic) + ": " + String(data));*/
 }
 
 /*
@@ -205,10 +213,10 @@ ExternalRGB myRGB(D0, D1, D2);
 /*
 // Attach interrupt handler to pin A0 to monitor pump Start/Stop
 */
-class A1State {
+class PumpState_A1 {
   public:
-    A1State() {
-      attachInterrupt(A1, &A1State::A1Handler, this, CHANGE);
+    PumpState_A1() {
+      attachInterrupt(A1, &PumpState_A1::A1Handler, this, CHANGE);
     }
     void A1Handler() {
       System.ticksDelay(50000*System.ticksPerMicrosecond()); // Debounce 50 milliseconds
@@ -224,45 +232,94 @@ class A1State {
     }
 };
 
-A1State pumpState; // Instantiate the class A0State
+PumpState_A1 pumpState; // Instantiate the class A0State
+// Initialisation
 
-Timer timer(2000, mainLoop);
+// function to print a device address
+void printAddress(DeviceAddress deviceAddress);
+void printAddress(DeviceAddress deviceAddress)
+{
+  for (uint8_t i = 0; i < 8; i++)
+  {
+    if (deviceAddress[i] < 16) Serial.print("0");
+    Serial.print(deviceAddress[i], HEX);
+    Serial.print(" ");
+  }
+  Serial.println();
+}
 
-bool MB7389Valid = false;
-String DistStr_mm;
-int MB7389currentReading = 0;
-int R = 82;
-int CR = 13;
 
 void setup() {
 // connect RX to Echo/Rx (US-100), TX to Trig/Tx (US-100)
-    Serial.begin(115200);
-    pinMode(RX, OUTPUT);
-    digitalWrite(RX, LOW);//Arrêter le capteur robuste MB7389
-    delay(3000); // Pour partir le moniteur série
+    Serial.begin(115200); // Pour débug
+    Serial1.begin(9600);  // Le capteur US-100 fonctionne à 9600 baud
+    delay(3000); // Pour partir le moniteur série pour débug
     // WiFi.setCredentials("BoilerHouse", "Station Shefford");
     // WiFi.setCredentials("PumpHouse", "Station Laporte");
-// Attendre la connection au nuage
-    Serial.println("En attente... ");
-    if (waitFor(Particle.connected, 10000)) {
-        if(Particle.connected()){
-            Serial.println("Connecté au nuage. :)");
-            /*//Quel est mon nom?
-                delay(3000);
-                Particle.subscribe("spark/", nameHandler);
-                Particle.publish("spark/device/name");
 
-            // Attendre la réception du nom
-                while(myDeviceName.length() == 0){
+    // Attendre la connection au nuage
+        Serial.println("En attente... ");
+        if (waitFor(Particle.connected, 10000)) {
+            if(Particle.connected()){
+                Serial.println("Connecté au nuage. :)");
+                //Quel est mon nom?
                     delay(1000);
-                    Serial.print(".");
-                }
-                Serial.println("\nMon nom est: " + myDeviceName + "\n");*/
-        } else {
-            Serial.println("Pas de connexion au nuage. :( ");
-        }
-    }
+                    Particle.subscribe("spark/", nameHandler);
+                    Particle.publish("spark/device/name");
 
+                // Attendre la réception du nom
+                    while(myDeviceName.length() == 0){
+                        delay(1000);
+                        Serial.print(".");
+                    }
+                    Serial.println("\nMon nom est: " + myDeviceName + "\n");
+            } else {
+                Serial.println("Pas de connexion au nuage. :( ");
+            }
+        }
+
+// Enregistrement des fonctions et variables disponible par le nuage
+    Serial.println("Enregistrement des variables et fonctions\n");
+    Particle.variable("relayState", RelayState);
+    Particle.function("relay", toggleRelay);
+    Particle.function("pubInterval", setPublishInterval);
+    Particle.function("reset", deviceReset);
+    delay(1000UL);
+
+// Configuration des capteurs de température DS18B20
+    ds18b20Sensors.begin();
+    delay(300);
+    ds18b20Count = ds18b20Sensors.getDeviceCount();
+    ds18b20Sensors.setWaitForConversion(true);
+    Serial.printlnf("DS18B20 trouvé: %d", ds18b20Count);
+
+    if (ds18b20Count == 1){
+        Serial.println("Configuration de 1 ds18b20");
+        ds18b20Sensors.getAddress(enclosureThermometer, 0);
+        printAddress(enclosureThermometer);
+        ds18b20Sensors.setResolution(enclosureThermometer, DallasSensorResolution);
+        Serial.printlnf("Device 0 Resolution: %d", ds18b20Sensors.getResolution(enclosureThermometer));
+
+    } else if (ds18b20Count == 2){
+        Serial.println("Configuration de 2 ds18b20");
+
+        ds18b20Sensors.getAddress(enclosureThermometer, 0);
+        printAddress(enclosureThermometer);
+        ds18b20Sensors.setResolution(enclosureThermometer, DallasSensorResolution);
+        Serial.printlnf("Device 0 Resolution: %d", ds18b20Sensors.getResolution(enclosureThermometer));
+        ds18b20Sensors.requestTemperaturesByAddress(enclosureThermometer); //requête de lecture
+        Serial.printlnf("Test device 0 enclosureThermometer = %f", ds18b20Sensors.getTempC(enclosureThermometer));
+
+
+        ds18b20Sensors.getAddress(outsideThermometer, 1);
+        printAddress(outsideThermometer);
+        ds18b20Sensors.setResolution(outsideThermometer, DallasSensorResolution);
+        Serial.printlnf("Device 1 Resolution: %d", ds18b20Sensors.getResolution(outsideThermometer));
+        ds18b20Sensors.requestTemperaturesByAddress(outsideThermometer); //requête de lecture
+        Serial.printlnf("Test device 0 enclosureThermometer = %f", ds18b20Sensors.getTempC(outsideThermometer));
+    }
+    Serial.println();
+    delay(2000UL);
 
 // Initialisation
     pinMode(led, OUTPUT);
@@ -281,19 +338,19 @@ void setup() {
         allTempReadings[i] = 0;
         /*Serial.println(allReadings[i]);*/
     }
-// Fonction et variable disponible par le nuage
-    Particle.variable("relayState", ssrRelayState);
-    Particle.function("relay", toggleRelay);
-    Particle.function("pubInterval", setPublishInterval);
 
     Time.zone(-4);
     Time.setFormat(TIME_FORMAT_ISO8601_FULL);
 
     lastPublish = millis(); //Initialise le temps initial de publication
     changeTime = lastPublish; //Initialise le temps initial de changement de la pompe
-    Serial.print("Start Timer");
-    timer.start();
 }
+
+/*
+    Le capteur de distance MB7389 fonctionne en continu.
+    Cette routine reçoit les données séries et met le résultats dans une variable
+     Pour utilisation par la routine de measure
+*/
 
 void serialEvent1()
 {
@@ -302,32 +359,39 @@ void serialEvent1()
 // Début de séquence
     if (c == R){
         MB7389Valid = true;
-        DistStr_mm = "";
+        Dist_MB7389Str = "";
         return;
     }
 
 // Fin de séquence
     if (c == CR){
         MB7389Valid = false;
-        MB7389currentReading = DistStr_mm.toInt();
+        MB7389latestReading = Dist_MB7389Str.toInt();
+        // Serial.println("Dist_MB7389Str= " + Dist_MB7389Str);
         return;
      }
 
 // Accumule des données
     if (MB7389Valid == true){
-        DistStr_mm += c;
+        Dist_MB7389Str += c;
     }
 }
 
-// void mainLoop(){
-//     digitalWrite(led, LOW);
-//     ReadDistance_MB7389();
-//     readDS18b20temp();
-//     digitalWrite(led, HIGH);
-//     Serial.println("Done mainLoop");
-// }
+/*
+    Boucle principale
+*/
+void loop(){
+    if (millis() > nextSampleTime) {
+        nextSampleTime = millis() + samplingInterval - 1;
+        readAllSensors();
+    }
+    CheckValvePos();
+}
 
-void mainLoop() {
+/*
+    Routine principale de lecture des capteurs
+*/
+void readAllSensors() {
     digitalWrite(led, LOW);
     now = millis();
     readDS18b20temp();
@@ -354,8 +418,13 @@ void mainLoop() {
     if (now - lastPublish > maxPublishDelay){
             lastPublish = now;
             pushToPublishQueue(evDistance, (int)(dist_mm / numReadings), now);
-            pushToPublishQueue(evTemperature, (int)(Temp/ numReadings), now);
-            pushToPublishQueue(evTempInterne, (int) prev_TempInterne, now);
+            pushToPublishQueue(evTemperature_US100, (int)(TempUS100/ numReadings), now);
+            if (ds18b20Count == 1){
+                pushToPublishQueue(evTempInterne, (int)prev_TempInterne, now);
+            } else if (ds18b20Count == 2){
+                pushToPublishQueue(evTempInterne, (int)prev_TempInterne, now);
+                pushToPublishQueue(evTempExterne, (int)prev_TempExterne, now);
+            }
             samplingInterval = slowSampling;   // Les mesure sont stable, réduire la fréquence de mesure.
         }
 
@@ -410,14 +479,8 @@ void ReadDistance_US100(){
 
 // Cette routine mesure la distance entre la surface de l'eau et le capteur ultason
 void ReadDistance_MB7389(){
-    Serial1.begin(9600);  // Le capteur US-100 fonctionne à 9600 baud
-    Serial1.halfduplex(true); //
-    delay(150); // Attente la lecture.
-    Serial1.end();
-    pinMode(RX, OUTPUT);
-    digitalWrite(RX, LOW); //Arrêter le capteur MB7389
-    int lastReading = MB7389currentReading;
-    Serial.printlnf("MB7389currentReading: %d", MB7389currentReading);
+    int lastReading = MB7389latestReading;
+    Serial.printlnf("MB7389latestReading: %d", MB7389latestReading);
     if((lastReading > 1) && (lastReading < maxRangeMB7389)){       // normal distance should between 1mm and 2500 mm (1mm, 2,5m)
         dist_mm = AvgDistReading(lastReading); // Average the distance readings
         Serial.printlnf("Dist.: %dmm, now= %d, lastPublish= %d, RSSI= %d", (int)(dist_mm / numReadings), now, lastPublish, WiFi.RSSI());
@@ -434,9 +497,7 @@ void ReadDistance_MB7389(){
         Serial.print(lastReading, DEC);
         Serial.println("mm ");
     }
-
  }
-
 
 // This routine read the temperature from the US-100 sensor.
 // Note: A varue of 45 MUST be substracted from the readings to obtain real temperature.
@@ -450,12 +511,12 @@ void Readtemp(){
         Temp45 = Serial1.read();     //Get the received byte (temperature)
         if((Temp45 > 1) && (Temp45 < 130))   //the valid range of received data is (1, 130)
         {
-            Temp = AvgTempReading(Temp45 - 45);
-            Serial.printlnf("Temp.:%dC now= %d, lastPublish= %d",  (int)(Temp/ numReadings), now, lastPublish);
-            if (abs(Temp - prev_Temp) > minTempChange){         // Publish event in case of a change in temperature
+            TempUS100 = AvgTempReading(Temp45 - 45);
+            Serial.printlnf("Temp.:%dC now= %d, lastPublish= %d",  (int)(TempUS100/ numReadings), now, lastPublish);
+            if (abs(TempUS100 - prev_TempUS100) > minTempChange){         // Publish event in case of a change in temperature
                     lastPublish = now;                               // reset the max publish delay counter.
-                    pushToPublishQueue(evTemperature, (int)(Temp/ numReadings), now);
-                    prev_Temp = Temp;
+                    pushToPublishQueue(evTemperature_US100, (int)(TempUS100/ numReadings), now);
+                    prev_TempUS100 = TempUS100;
                     samplingInterval = fastSampling;   //Measurements NOT stable, increase the sampling frequency
                 }
         }
@@ -499,22 +560,58 @@ int AvgTempReading(int thisReading){
 }
 
 double readDS18b20temp(){
-    double temperature = -99.0;
-    sensor.begin();
-    sensor.requestTemperatures();
-    // delay(200);
-    temperature = sensor.getTempCByIndex(0);
-    if ((int)temperature > -127 && (int)temperature < 85){
-        if (abs(temperature - prev_TempInterne) >= 1){
-            pushToPublishQueue(evTempInterne, (int) temperature, now);
-            prev_TempInterne = temperature;
-        }
-        Serial.printlnf("DS18b20: %f", temperature);
-    } else {
-        Serial.printlnf("DS18B20: Erreur de lecture");
-        temperature = 99;
+    if (ds18b20Count > 0){
+        if (ds18b20Count > 1){
+            // Un capteur à l'intérieur du boitier et un à l'extérieur
+            Serial.printlnf("lecture de 2 capteurs");
+            ds18b20Sensors.requestTemperaturesByAddress(enclosureThermometer); //requête de lecture
+            float insideTempC = ds18b20Sensors.getTempC(enclosureThermometer);
+            if ((int)insideTempC > -127 && (int)insideTempC < 85){
+                if (abs(insideTempC - prev_TempInterne) >= 1){
+                    pushToPublishQueue(evTempInterne, (int) insideTempC, now);
+                    prev_TempInterne = insideTempC;
+                }
+                Serial.printlnf("DS18b20 interne: %f", insideTempC);
+            } else {
+                Serial.printlnf("DS18B20 interne: Erreur de lecture");
+                insideTempC = 99;
+            }
+            delay(50UL);
+            ds18b20Sensors.requestTemperaturesByAddress(outsideThermometer); //requête de lecture
+             float outsideTempC = ds18b20Sensors.getTempC(outsideThermometer);
+            if ((int)outsideTempC > -127 && (int)outsideTempC < 85){
+                if (abs(outsideTempC - prev_TempExterne) >= 1){
+                    pushToPublishQueue(evTempExterne, (int) outsideTempC, now);
+                    prev_TempExterne = outsideTempC;
+                }
+                Serial.printlnf("DS18b20 externe: %f", outsideTempC);
+            } else {
+                Serial.printlnf("DS18B20 externe: Erreur de lecture");
+                outsideTempC = 99;
+            }
+
+            return (outsideTempC);
+
+         } else {
+            // Un capteur à l'intérieur du boitier
+            Serial.printlnf("lecture de 1 capteurs");
+            /*ds18b20Sensors.requestTemperaturesByAddress(enclosureThermometer); //requête de lecture*/
+            float insideTempC = ds18b20Sensors.getTempC(enclosureThermometer);
+            if ((int)insideTempC > -127 && (int)insideTempC < 85){
+                if (abs(insideTempC - prev_TempInterne) >= 1){
+                    pushToPublishQueue(evTempInterne, (int) insideTempC, now);
+                    prev_TempInterne = insideTempC;
+                }
+                Serial.printlnf("DS18b20 interne: %f", insideTempC);
+            } else {
+                Serial.printlnf("DS18B20 interne: Erreur de lecture");
+                insideTempC = 99;
+            }
+            return (insideTempC);
+
+         }
+
     }
-    return (temperature);
 }
 
 // Check the state of the valves position reedswitch
@@ -556,17 +653,17 @@ void killTime(unsigned long interval){
 // Active ou désactive le relais SSR
 int toggleRelay(String command) {
     if (command=="on" || command=="1") {
-        ssrRelayState = HIGH;
-        digitalWrite(ssrRelay, ssrRelayState);
+        RelayState = HIGH;
+        digitalWrite(ssrRelay, RelayState);
         /*Particle.publish("Relais", "on", 60, PRIVATE);*/
-        pushToPublishQueue(evRelais, ssrRelayState, now);
+        pushToPublishQueue(evRelais, RelayState, now);
         return 1;
     }
     else if (command=="off" || command=="0") {
-        ssrRelayState = LOW;
-        digitalWrite(ssrRelay, ssrRelayState);
+        RelayState = LOW;
+        digitalWrite(ssrRelay, RelayState);
         /*Particle.publish("Relais", "off", 60, PRIVATE);*/
-        pushToPublishQueue(evRelais, ssrRelayState, now);
+        pushToPublishQueue(evRelais, RelayState, now);
          return 0;
     }
     else {
@@ -584,6 +681,11 @@ int setPublishInterval(String command){
     } else {
         return -1;
     }
+}
+
+// Por resetter le capteur à distance au besoin
+int deviceReset(String command) {
+    /*System.reset();*/
 }
 
 // Formattage standard pour les données sous forme JSON
