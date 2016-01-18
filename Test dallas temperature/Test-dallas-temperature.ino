@@ -100,21 +100,33 @@ void loop(void)
 }
 
 void getTemps(){
+        float outsideTempC, insideTempC;
+        int i;
         digitalWrite(statusLed, LOW);
         // call sensors.requestTemperatures() to issue a global temperature
         // request to all devices on the bus
         sensors.requestTemperatures(); // Send the command to get temperatures
 
+        for (i = 0; i < 5; i++){
+            outsideTempC = sensors.getTempC(outsideThermometer);
+            if (outsideTempC > -127 && outsideTempC < 85){
+                break;
+            }
+        }
         Serial.printlnf("Now = %d", millis());
-        float outsideTempC = sensors.getTempC(outsideThermometer);
-        Serial.printlnf("Outdoor Temperature C: %5.2f", outsideTempC);
+        Serial.printlnf("Outdoor Temperature C: %5.2f, try= %d", outsideTempC, i + 1);
 
         // Publish the temperature online
         String myOutsideStr(outsideTempC, 3); // Cast the float into a string
         Spark.publish("OutTempC", myOutsideStr);
 
-        float insideTempC = sensors.getTempC(insideThermometer);
-        Serial.printlnf("Indoor Temperature C: %5.2f", insideTempC);
+        for (i = 0; i < 5; i++){
+            insideTempC = sensors.getTempC(insideThermometer);
+            if (insideTempC > -127 && insideTempC < 85){
+                break;
+            }
+        }
+        Serial.printlnf("Indoor Temperature C: %5.2f, try= %d", insideTempC, i + 1);
 
         // Publish the temperature online
         String myInsideStr(insideTempC, 3); // Cast the float into a string
