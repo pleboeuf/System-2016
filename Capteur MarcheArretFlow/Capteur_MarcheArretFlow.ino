@@ -260,7 +260,7 @@ void setup() {
       Particle.variable("relayState", ssrRelayState);
       Particle.function("relay", toggleRelay);
       Particle.function("pubInterval", setPublishInterval);
-      Particle.function("reset", deviceReset);
+      Particle.function("reset", remoteReset);
       Particle.function("getEvents", replayEvent);
     }
 
@@ -530,19 +530,19 @@ int setPublishInterval(String command){
 }
 
 // Pour reseter le capteur à distance au besoin
-int deviceReset(String command) {
+int remoteReset(String command) {
     /*Serial.println("Resetting...");*/
-    System.reset();
+    if (command == "device"){
+        System.reset();
+    } else if (command == "serialNo") {
+        noSerie = 0;
+    }
 }
 
 // Permet de demander un of des événements manquants
 bool replayEvent(String command){
     return true;
 }
-
-
-//Particle.publish("startup", String::format("frobnicator started at %s", Time.timeStr().c_str()));
-
 
 // Formattage standard pour les données sous forme JSON
 String makeJSON(unsigned long numSerie, int eData, unsigned long eTime, String eName){
