@@ -69,7 +69,7 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 #define evVacuum 10
 #define evDebit 11
 #define evVolume 12
-#define evPressionAtmos 13
+#define evPressionAtmospherique 13
 #define evTempInterne 14
 #define evTempExterne 15
 
@@ -138,7 +138,6 @@ int allTempReadings[numReadings];
 int dist_mm  = 0;
 int prev_dist_mm = 0;
 int allDistReadings[numReadings];
-long AvgDist = 0;
 
 // Variables liés au temps
 unsigned long lastPublish;
@@ -315,7 +314,7 @@ void loop() {
     }
 // Publication des événements se trouvant dans le buffer
     if(buffLen > 0){
-        Serial.printlnf("BufferLen = %u, Cloud = %s", buffLen, (Particle.connected() ? "true" : "false")); // Pour debug
+        Serial.printlnf("Buffer = %u, Cloud = %s", buffLen, (Particle.connected() ? "true" : "false")); // Pour debug
         bool success = publishQueuedEvents();
         Serial.printlnf("Publishing = %u, Status: %s", readPtr - 1, (success ? "Fait" : "Pas Fait")); // Pour debug
     }
@@ -385,34 +384,28 @@ void Readtemp_US100(){
 // Note: Il s'agit en fait de la somme des x dernière lecture.
 //       La division se fera au moment de la publication
 int AvgDistReading(int thisReading){
-    long AvgDist = 0;
+    long Avg = 0;
     for (int i = 1; i < numReadings; i++){
         allDistReadings[i-1] = allDistReadings[i]; //Shift all readings
-        /*Serial.print(allDistReadings[i-1]);
-        Serial.print(" ");*/
-        AvgDist += allDistReadings[i-1]; //Total of readings except the last one
+       Avg += allDistReadings[i-1]; //Total of readings except the last one
     }
     allDistReadings[numReadings-1] = thisReading; //Current reading in the last position
-    /*Serial.print(allDistReadings[numReadings-1]);
-    Serial.print("   ");*/
-    AvgDist += thisReading; //including the last one
-    /*Serial.print(" AvgDist= ");
-    Serial.println(AvgDist / numReadings);*/
-    return (AvgDist); // Avg sera divisé par numReadings au moment de la publication
+    Avg += thisReading; //including the last one
+    return (Avg); // Avg sera divisé par numReadings au moment de la publication
 }
 
 // Filtre par moyenne mobile pour les température
 // Note: Il s'agit en fait de la somme des x dernière lecture.
 //       La division se fera au moment de la publication
 int AvgTempReading(int thisReading){
-    long AvgTemp = 0;
+    long Avg = 0;
     for (int i = 1; i < numReadings; i++){
         allTempReadings[i-1] = allTempReadings[i]; //Shift all readings
-        AvgTemp += allTempReadings[i-1]; //Total of readings except the last one
+        Avg += allTempReadings[i-1]; //Total of readings except the last one
     }
     allTempReadings[numReadings - 1] = thisReading; //Current reading in the last position
-    AvgTemp += thisReading; //total including the last one
-    return (AvgTemp); // Avg sera divisé par numReadings au moment de la publication
+    Avg += thisReading; //total including the last one
+    return (Avg); // Avg sera divisé par numReadings au moment de la publication
 }
 
 // Check the state of the valves position reedswitch
@@ -531,7 +524,7 @@ bool writeEvent(struct Event thisEvent){
   }
   eventBuffer[writePtr] = thisEvent;
   writePtr = (writePtr + 1) % buffSize; // avancer writePtr
-  buffLen++; // increment la longueur du buffer
+  buffLen = writePtr - readPtr;
   //pour debug
   Serial.print("-------> " + eventName[thisEvent.namePtr]);
   Serial.printlnf(": writeEvent:: writePtr= %u, readPtr= %u, buffLen= %u, noSerie: %u, eData: %u, eTime: %u",
@@ -549,7 +542,7 @@ struct Event readEvent(){
   }
   thisEvent = eventBuffer[readPtr];
   readPtr = (readPtr + 1) % buffSize;
-  buffLen--; // décrémente la longueur du buffer
+  buffLen = writePtr - readPtr;
   //pour debug
   Serial.print("<------- " + eventName[thisEvent.namePtr]);
   Serial.printlnf(": readEvent:: writePtr= %u, readPtr= %u, buffLen= %u, noSerie: %u, eData: %u, eTime: %u",
@@ -566,7 +559,7 @@ struct Event peekEvent(){
     return thisEvent; // événement vide
   }
   thisEvent = eventBuffer[readPtr];
- // buffLen = writePtr - readPtr;
+  buffLen = writePtr - readPtr;
   //pour debug
   Serial.print(" ------- " + eventName[thisEvent.namePtr]);
   Serial.printlnf(": peekEvent:: writePtr= %u, readPtr= %u, buffLen= %u, noSerie: %u, eData: %u, eTime: %u",

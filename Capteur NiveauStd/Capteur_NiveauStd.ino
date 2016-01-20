@@ -1,3 +1,7 @@
+// This #include statement was automatically added by the Particle IDE.
+/*#include "spark-dallas-temperature.h"
+#include "OneWire.h"*/
+
 // Photon Pin	Fonction		                    Location                |Capteur Standard	|Capteur Robuste	|Capteur On / Off	|Commun
 //      D6	     SSR Relay 	                         Ext.	                        	                   	                  O
 //      A0	     Signal moteur opto couplé - IAC5A	 Onboard	                    	                   	                  O
@@ -15,11 +19,11 @@
 //      Rx	US-100 Pin 3 - Echo / Rx	             Onboard	                   O
 //      Gnd	US-100 Pin 4 - Gnd	                     Onboard	                   O
 //      Gnd	US-100 Pin 5 - Gnd	                     Onboard	                   O
-//      3V3	XL-Max Sonar MB7092 Pin 1 - Nc or High	 Ext.	                        	                  O
-//      D5	XL-Max Sonar MB7092 Pin 2 - Pulse out	 Ext.	                        	                  O
-//      Tx	XL-Max Sonar MB7092 Pin 4 - Trig 20uS	 Ext.	                                              O
-//      Rx	XL-Max Sonar MB7092 Pin 5 - Serial out	 Ext.	                        	                  O
-//      Gnd	XL-Max Sonar MB7092 Pin 7 - Gnd	         Ext.	                                              O
+//      3V3	XL-Max Sonar MB7389 Pin 1 - Nc or High	 Ext.	                        	                  O
+//      D5	XL-Max Sonar MB7389 Pin 2 - Pulse out	 Ext.	                        	                  O
+//      Tx	XL-Max Sonar MB7389 Pin 4 - Trig 20uS	 Ext.	                                              O
+//      Rx	XL-Max Sonar MB7389 Pin 5 - Serial out	 Ext.	                        	                  O
+//      Gnd	XL-Max Sonar MB7389 Pin 7 - Gnd	         Ext.	                                              O
 //      D4	Dallas 18b20 Temperature sensor	         Onboard / Ext.	               O	                  O	                  O	             O
 //      D3	Heating circuit. Power control	         Onboard	                     	                  O
 //      Vbat	Memory backup battery CR2032	     Onboard	                   O	                  O	                  O	             O
@@ -39,21 +43,28 @@ Les événements sont stocké au fur et à mesure de leur production. Il seront 
 indépendamment de leur production.
 */
 
-SYSTEM_THREAD(ENABLED);
+/*SYSTEM_THREAD(ENABLED);*/
 STARTUP(WiFi.selectAntenna(ANT_EXTERNAL));
 STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
+
 
 #define minute 60000UL            // 60000 millisecond per minute
 #define second 1000UL             // 1000 millisecond per sesond
 #define unJourEnMillis (24 * 60 * 60 * second)
 #define baseLoopTime  206      //Estimated loop time in millisecond
 #define debounceDelay 50    // Debounce time for valve position readswitch
-#define fastSampling  1   // in second
-#define slowSampling  5    // in second
+#define fastSampling  1000UL   // in milliseconds
+#define slowSampling  5000UL   // in milliseconds
 #define numReadings 10           // Number of readings to average for filtering
 #define minDistChange 1.7 * numReadings      // Minimum change in distance to publish an event (1/16")
 #define minTempChange 0.5 * numReadings      // Minimum temperature change to publish an event
 #define maxRangeUS100 2500 // Distance maximale valide pour le captgeur
+#define maxRangeMB7389 4999 // Distance maximale valide pour le captgeur
+#define ONE_WIRE_BUS D4 //senseur sur D4
+#define DallasSensorResolution 9 // Résolution de lecture de température
+#define MaxHeatingPowerPC 50 // Puissance maximale appliqué sur la résistance de chauffage
+#define HeatingSetPoint 15 // Température cible à l'intérieur du boitier
+
 
 // Nom des indices du tableau eventName
 #define evPompe_T1 0
@@ -72,30 +83,33 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 #define evPressionAtmos 13
 #define evTempInterne 14
 #define evTempExterne 15
+#define evHeating 16
+
 
 // Variables lié aux événements
 String eventName[] = {
-  "Pompe T1",
-  "Pompe T2",
-  "Distance",
-  "Temperature US100",
-  "Hors portée: ",
-  "Valve A",
-  "Valve B",
-  "Valve C",
-  "Valve D",
-  "Relais",
-  "Vacuum",
-  "Débit",
-  "Volume",
-  "Pression Atmosphérique",
-  "Température interne",
-  "Température externe"
-};
+    "sonde/Pompe_T1",
+    "sonde/Pompe_T2",
+    "sonde/Distance",
+    "sonde/Temperature_US100",
+    "sonde/Hors portée: ",
+    "sonde/Valve1_Open",
+    "sonde/Valve1_Close",
+    "sonde/Valve2_Open",
+    "sonde/Valve2_Close",
+    "sortie/Relais",
+    "sonde/Vacuum",
+    "sonde/Débit",
+    "sonde/Volume",
+    "sonde/Pression Atmosphérique",
+    "sonde/Température interne",
+    "sonde/Température externe",
+    "sortie/Chauffage boitier"
+    };
 
 // Structure définissant un événement
-struct Event{
-  int16_t noSerie; // Le numéro de série est généré automatiquement
+typedef struct Event{
+  uint16_t noSerie; // Le numéro de série est généré automatiquement
   uint8_t namePtr; // Pointeur dans l'array des nom d'événement. (Pour sauver de l'espace NVRAM)
   int16_t eData;   // Données pour cet événement. Entier 16 bits. Pour sauvegarder des données en point flottant
                    // multiplié d'abord la donnée par un facteur (1000 par ex.) en convertir en entier.
@@ -107,6 +121,8 @@ unsigned int buffLen = 0;
 retained unsigned int writePtr = 0;
 retained unsigned int readPtr = 0;
 retained struct Event eventBuffer[buffSize];
+String DomainName = "brunelle/";
+String DeptName = "prod/";
 
 // Pin pour l' I/O
 int RGBled_Red = D0;
@@ -116,6 +132,7 @@ int led = D7; // Feedback led
 int ssrRelay = D6; // Solid state relay
 int ssrRelayState = false;
 int motorState = A0; // input pour Pompe marche/arrêt
+int heater = D3; //Contrôle le transistor du chauffage
 
 // Variables liés à la pompe
 bool PumpOldState = true;
@@ -138,7 +155,6 @@ int allTempReadings[numReadings];
 int dist_mm  = 0;
 int prev_dist_mm = 0;
 int allDistReadings[numReadings];
-long AvgDist = 0;
 
 // Variables liés au temps
 unsigned long lastPublish;
@@ -148,10 +164,11 @@ unsigned int samplingInterval = fastSampling;
 int maxPublishInterval = 2;
 unsigned long maxPublishDelay = maxPublishInterval * minute;
 unsigned long lastTime = 0UL;
+unsigned long nextSampleTime;
 
 // Variables liés aux publications
 char publishString[buffSize];
-retained unsigned noSerie = 0; //Mettre en Backup RAM
+retained uint16_t noSerie = 0; //Mettre en Backup RAM
 int pumpEvent = 0;
 bool connWasLost = false;
 
@@ -178,9 +195,9 @@ class ExternalRGB {
     }
 
     void LEDhandler(uint8_t r, uint8_t g, uint8_t b) {
-      analogWrite(pin_r, r); // 255 - r pour common cathode
-      analogWrite(pin_g, g); // 255 - g pour common cathode
-      analogWrite(pin_b, b); // 255 - b pour common cathode
+        analogWrite(pin_r, 255 - r); // 255 - r pour common cathode
+        analogWrite(pin_g, 255 - g); // 255 - g pour common cathode
+        analogWrite(pin_b, 255 - b); // 255 - b pour common cathode
     }
 
     private:
@@ -195,16 +212,16 @@ ExternalRGB myRGB(RGBled_Red, RGBled_Green, RGBLed_Blue);
 /*
 // Attach interrupt handler to pin A0 to monitor pump Start/Stop
 */
-class PumpInputState {
+class PumpState_A1 {
   public:
-    PumpInputState() {
-      attachInterrupt(motorState, &PumpInputState::A0Handler, this, CHANGE);
+    PumpState_A1() {
+      attachInterrupt(A1, &PumpState_A1::A1Handler, this, CHANGE);
     }
-    void A0Handler() {
+    void A1Handler() {
       System.ticksDelay(50000*System.ticksPerMicrosecond()); // Debounce 50 milliseconds
       Serial.print("Pompe ");
       // enregistre l'état et le temps
-      PumpCurrentState = digitalRead(A0);
+      PumpCurrentState = digitalRead(A1);
       changeTime = millis();
       if (PumpCurrentState == false){
         Serial.println("On");
@@ -214,34 +231,45 @@ class PumpInputState {
     }
 };
 
-PumpInputState pumpState; // Instantiate the class PumpInputState
+PumpState_A1 pumpState; // Instantiate the class A0State
 
 void setup() {
 // connect RX to Echo/Rx (US-100), TX to Trig/Tx (US-100)
     Serial.begin(115200);
     Serial1.begin(9600);  // Le capteur US-100 fonctionne à 9600 baud
+    delay(300UL);
+// Enregistrement des fonctions et variables disponible par le nuage
+    Serial.printlnf("\nEnregistrement des variables et fonctions\n");
+    Particle.variable("relayState", ssrRelayState);
+    Particle.function("relay", toggleRelay);
+    Particle.function("pubInterval", setPublishInterval);
+    Particle.function("reset", deviceReset);
+    Particle.function("getEvents", replayEvent);
+
     delay(3000); // Pour partir le moniteur série
-// Attendre la connection au nuage
-    Serial.println("En attente... ");
-    if (waitFor(Particle.connected, 10000)) {
-        if(Particle.connected()){
-            Serial.println("Connecté au nuage. :)");
-            /*//Quel est mon nom?
-                delay(3000);
-                Particle.subscribe("spark/", nameHandler);
-                Particle.publish("spark/device/name");
 
-            // Attendre la réception du nom
-                while(myDeviceName.length() == 0){
+    // Attendre la connection au nuage
+        Serial.println("En attente... ");
+        if (waitFor(Particle.connected, 10000)) {
+            if(Particle.connected()){
+                Serial.println("Connecté au nuage. :)");
+                //Quel est mon nom?
                     delay(1000);
-                    Serial.print(".");
-                }
-                Serial.println("\nMon nom est: " + myDeviceName + "\n");*/
-        } else {
-            Serial.println("Pas de connexion au nuage. :( ");
-        }
-    }
+                    Particle.subscribe("spark/", nameHandler);
+                    Particle.publish("spark/device/name");
 
+                // Attendre la réception du nom
+                    while(myDeviceName.length() == 0){
+                        delay(1000);
+                        Serial.print(".");
+                    }
+                    Serial.println("\nMon nom est: " + myDeviceName + "\n");
+            } else {
+                Serial.println("Pas de connexion au nuage. :( ");
+            }
+        }
+
+    delay(1000UL);
 
 // Initialisation
     pinMode(led, OUTPUT);
@@ -258,10 +286,6 @@ void setup() {
         allTempReadings[i] = 0;
         /*Serial.println(allReadings[i]);*/
     }
-// Fonction et variable disponible par le nuage
-    Particle.function("relay", toggleRelay);
-    Particle.variable("relayState", &ssrRelayState, INT);
-    Particle.function("pubInterval", setPublishInterval);
 
     Time.zone(-4);
     Time.setFormat(TIME_FORMAT_ISO8601_FULL);
@@ -270,8 +294,19 @@ void setup() {
     changeTime = lastPublish; //Initialise le temps initial de changement de la pompe
 }
 
-void loop() {
-    digitalWrite(led, HIGH); // Pour indiqué le début de la prise de mesure
+/*
+    Boucle principale
+*/
+void loop(){
+    if (millis() > nextSampleTime) {
+        nextSampleTime = millis() + samplingInterval - 1;
+        readAllSensors();
+    }
+    CheckValvePos();
+}
+
+void readAllSensors() {
+    digitalWrite(led, LOW); // Pour indiqué le début de la prise de mesure
     now = millis();
 // ********* Appeler ici les fonctions de mesure pour le capteur concerné. ***********
 //
@@ -283,10 +318,10 @@ void loop() {
     ReadDistance_US100();
 //
 // ************************************************************************************
-    digitalWrite(led, LOW); // Pour indiqué la fin de la prise de mesure
+    digitalWrite(led, HIGH); // Pour indiqué la fin de la prise de mesure
 
 // Publication de l'état de la pompe s'il y a eu changement
-    if (PumpCurrentState != PumpOldState){
+    /*if (PumpCurrentState != PumpOldState){
       PumpOldState = PumpCurrentState;
       if (PumpCurrentState == true){
         pumpEvent = evPompe_T1;
@@ -294,7 +329,7 @@ void loop() {
         pumpEvent = evPompe_T2;
       }
       pushToPublishQueue(pumpEvent, PumpCurrentState, changeTime);
-    }
+    }*/
 // Pour permettre la modification de maxPublishDelay par le nuage
     maxPublishDelay = maxPublishInterval * minute;
 
@@ -315,11 +350,11 @@ void loop() {
     }
 // Publication des événements se trouvant dans le buffer
     if(buffLen > 0){
-        Serial.printlnf("BufferLen = %u, Cloud = %s", buffLen, (Particle.connected() ? "true" : "false")); // Pour debug
+        Serial.printlnf("Buffer = %u, Cloud = %s", buffLen, (Particle.connected() ? "true" : "false")); // Pour debug
         bool success = publishQueuedEvents();
         Serial.printlnf("Publishing = %u, Status: %s", readPtr - 1, (success ? "Fait" : "Pas Fait")); // Pour debug
     }
-    killTime(samplingInterval); // Maintient la boucle sur une base de 1 second
+    /*killTime(samplingInterval); // Maintient la boucle sur une base de 1 second*/
 }
 
 // Cette routine mesure la distance entre la surface de l'eau et le capteur ultason
@@ -385,34 +420,28 @@ void Readtemp_US100(){
 // Note: Il s'agit en fait de la somme des x dernière lecture.
 //       La division se fera au moment de la publication
 int AvgDistReading(int thisReading){
-    long AvgDist = 0;
+    long Avg = 0;
     for (int i = 1; i < numReadings; i++){
         allDistReadings[i-1] = allDistReadings[i]; //Shift all readings
-        /*Serial.print(allDistReadings[i-1]);
-        Serial.print(" ");*/
-        AvgDist += allDistReadings[i-1]; //Total of readings except the last one
+       Avg += allDistReadings[i-1]; //Total of readings except the last one
     }
     allDistReadings[numReadings-1] = thisReading; //Current reading in the last position
-    /*Serial.print(allDistReadings[numReadings-1]);
-    Serial.print("   ");*/
-    AvgDist += thisReading; //including the last one
-    /*Serial.print(" AvgDist= ");
-    Serial.println(AvgDist / numReadings);*/
-    return (AvgDist); // Avg sera divisé par numReadings au moment de la publication
+    Avg += thisReading; //including the last one
+    return (Avg); // Avg sera divisé par numReadings au moment de la publication
 }
 
 // Filtre par moyenne mobile pour les température
 // Note: Il s'agit en fait de la somme des x dernière lecture.
 //       La division se fera au moment de la publication
 int AvgTempReading(int thisReading){
-    long AvgTemp = 0;
+    long Avg = 0;
     for (int i = 1; i < numReadings; i++){
         allTempReadings[i-1] = allTempReadings[i]; //Shift all readings
-        AvgTemp += allTempReadings[i-1]; //Total of readings except the last one
+        Avg += allTempReadings[i-1]; //Total of readings except the last one
     }
     allTempReadings[numReadings - 1] = thisReading; //Current reading in the last position
-    AvgTemp += thisReading; //total including the last one
-    return (AvgTemp); // Avg sera divisé par numReadings au moment de la publication
+    Avg += thisReading; //total including the last one
+    return (Avg); // Avg sera divisé par numReadings au moment de la publication
 }
 
 // Check the state of the valves position reedswitch
@@ -434,7 +463,7 @@ void CheckValvePos(){
             } else {
                 stateStr = "Fermé";
             }
-            Serial.println(eventName[ValvePos_Name[i]] + ": " + stateStr );
+            Serial.println(DomainName + DeptName + eventName[ValvePos_Name[i]] + ": " + stateStr );
             pushToPublishQueue(ValvePos_Name[i], valveCurrentState, now);
         }
     }
@@ -484,10 +513,22 @@ int setPublishInterval(String command){
     }
 }
 
+// Pour reseter le capteur à distance au besoin
+int deviceReset(String command) {
+    /*Serial.println("Resetting...");*/
+    System.reset();
+}
+
+// Permet de demander un of des événements manquants
+bool replayEvent(String command){
+    return true;
+}
+
 // Formattage standard pour les données sous forme JSON
-String makeJSON(unsigned long numSerie, int eData, unsigned long eTime){
-    sprintf(publishString,"{'noSerie': %u,'eTime': %u,'eData': %d}", numSerie, eTime, eData);
-    /*Serial.println(publishString);*/
+String makeJSON(unsigned long numSerie, int eData, unsigned long eTime, String eName){
+    /*char* formattedEName = String::format("%c", eName.c_str());*/
+    sprintf(publishString,"{\"noSerie\": %u,\"eTime\": %lu,\"eData\":%d,\"eName\": \"%s\"}", numSerie, eTime, eData, eName.c_str());
+    Serial.println(publishString);
     return publishString;
 }
 
@@ -497,7 +538,10 @@ bool pushToPublishQueue(int eventNamePtr, int eData, unsigned long eTime){
   thisEvent = {noSerie, eventNamePtr, eData, eTime};
   Serial.println(">>>> pushToPublishQueue:::");
   writeEvent(thisEvent); // Pousse les données dans le buffer circulaire
-  noSerie += 1;
+  noSerie++;
+  if (noSerie > 65535){
+     noSerie = 0;
+    }
 }
 
 // Publie un événement stocké en mémoire
@@ -514,7 +558,7 @@ bool publishQueuedEvents(){
           connWasLost =  false;
           delay(2000); // Gives some time to avoid loosing events
         }
-        publishSuccess = Particle.publish(eventName[thisEvent.namePtr], makeJSON(thisEvent.noSerie, thisEvent.eData, thisEvent.eTime), 60, PRIVATE);
+        publishSuccess = Particle.publish(DomainName + DeptName + eventName[thisEvent.namePtr], makeJSON(thisEvent.noSerie, thisEvent.eData, thisEvent.eTime, DomainName + DeptName + eventName[thisEvent.namePtr]), 60, PRIVATE);
         if (publishSuccess){
         readEvent(); // Avance le pointeur de lecture
         }
@@ -531,9 +575,9 @@ bool writeEvent(struct Event thisEvent){
   }
   eventBuffer[writePtr] = thisEvent;
   writePtr = (writePtr + 1) % buffSize; // avancer writePtr
-  buffLen++; // increment la longueur du buffer
+  buffLen = writePtr - readPtr;
   //pour debug
-  Serial.print("-------> " + eventName[thisEvent.namePtr]);
+  Serial.print("-------> " + DomainName + DeptName + eventName[thisEvent.namePtr]);
   Serial.printlnf(": writeEvent:: writePtr= %u, readPtr= %u, buffLen= %u, noSerie: %u, eData: %u, eTime: %u",
                                      writePtr, readPtr, buffLen, thisEvent.noSerie, thisEvent.eData, thisEvent.eTime);
   return true;
@@ -549,9 +593,9 @@ struct Event readEvent(){
   }
   thisEvent = eventBuffer[readPtr];
   readPtr = (readPtr + 1) % buffSize;
-  buffLen--; // décrémente la longueur du buffer
+  buffLen = writePtr - readPtr;
   //pour debug
-  Serial.print("<------- " + eventName[thisEvent.namePtr]);
+  Serial.print("<------- " + DomainName + DeptName + eventName[thisEvent.namePtr]);
   Serial.printlnf(": readEvent:: writePtr= %u, readPtr= %u, buffLen= %u, noSerie: %u, eData: %u, eTime: %u",
                                     writePtr, readPtr, buffLen, thisEvent.noSerie, thisEvent.eData, thisEvent.eTime);
   return thisEvent;
@@ -566,7 +610,7 @@ struct Event peekEvent(){
     return thisEvent; // événement vide
   }
   thisEvent = eventBuffer[readPtr];
- // buffLen = writePtr - readPtr;
+  buffLen = writePtr - readPtr;
   //pour debug
   Serial.print(" ------- " + eventName[thisEvent.namePtr]);
   Serial.printlnf(": peekEvent:: writePtr= %u, readPtr= %u, buffLen= %u, noSerie: %u, eData: %u, eTime: %u",
