@@ -1,32 +1,33 @@
 // This #include statement was automatically added by the Particle IDE.
 #include "spark-dallas-temperature.h"
 #include "OneWire.h"
+/*#include "pub-buffer-handler.h"*/
 
 // Photon Pin	Fonction		                    Location                |Capteur Standard	|Capteur Robuste	|Capteur On / Off	|Commun
 //      D6	     SSR Relay 	                         Ext.	                        	                   	                  O
 //      A0	     Signal moteur opto couplé - IAC5A	 Onboard	                    	                   	                  O
-//      A1	     Signal moteur par Current xformer	 Ext.                           	                                      O
-//      A2	     Valve 1A	                         Ext.                          O                      O
-//      A3	     Valve 1B	                         Ext.	                       O	                  O
-//      A4	     Valve 2A	                         Ext.	                       O	                  O
-//      A5	     Valve 2B	                         Ext.	                       O	                  O
-//      D2 (pwm)	RGB Led Red	                     Onboard	                   O	                  O	                  O	             O
-//      D1 (pwm)	RGB Led Green	                 Onboard	                   O	                  O	                  O	             O
-//      D0 (pwm)	RGB Led Blue	                 Onboard	                   O	                  O	                  O	             O
-//      D7	Activity Blue LED	                     Onboard	                   O	                  O	                  O	             O
+//      A1	     Signal moteur par Current xformer	 Ext.                           	                                    O
+//      A2	     Valve 1A	                           Ext.                        O                    O
+//      A3	     Valve 1B	                           Ext.	                       O	                  O
+//      A4	     Valve 2A	                           Ext.	                       O	                  O
+//      A5	     Valve 2B	                           Ext.	                       O	                  O
+//      D2 (pwm)	RGB Led Red	                       Onboard	                   O	                  O	                  O	             O
+//      D1 (pwm)	RGB Led Green	                     Onboard	                   O	                  O	                  O	             O
+//      D0 (pwm)	RGB Led Blue	                     Onboard	                   O	                  O	                  O	             O
+//      D7	Activity Blue LED	                       Onboard	                   O	                  O	                  O	             O
 //      3V3	US-100 Pin 1 - Vcc	                     Onboard	                   O
-//      Tx	US-100 Pin 2 - Trig /  Tx	             Onboard	                   O
-//      Rx	US-100 Pin 3 - Echo / Rx	             Onboard	                   O
+//      Tx	US-100 Pin 2 - Trig /  Tx	               Onboard	                   O
+//      Rx	US-100 Pin 3 - Echo / Rx	               Onboard	                   O
 //      Gnd	US-100 Pin 4 - Gnd	                     Onboard	                   O
 //      Gnd	US-100 Pin 5 - Gnd	                     Onboard	                   O
 //      3V3	XL-Max Sonar MB7389 Pin 1 - Nc or High	 Ext.	                        	                  O
-//      D5	XL-Max Sonar MB7389 Pin 2 - Pulse out	 Ext.	                        	                  O
-//      Tx	XL-Max Sonar MB7389 Pin 4 - Trig 20uS	 Ext.	                                              O
+//      D5	XL-Max Sonar MB7389 Pin 2 - Pulse out	   Ext.	                        	                  O
+//      Tx	XL-Max Sonar MB7389 Pin 4 - Trig 20uS	   Ext.	                                            O
 //      Rx	XL-Max Sonar MB7389 Pin 5 - Serial out	 Ext.	                        	                  O
-//      Gnd	XL-Max Sonar MB7389 Pin 7 - Gnd	         Ext.	                                              O
-//      D4	Dallas 18b20 Temperature sensor	         Onboard / Ext.	               O	                  O	                  O	             O
+//      Gnd	XL-Max Sonar MB7389 Pin 7 - Gnd	         Ext.	                                            O
+//      D4	Dallas 18b20 Temperature sensor	         Onboard / Ext.	             O	                  O	                  O	             O
 //      D3	Heating circuit. Power control	         Onboard	                     	                  O
-//      Vbat	Memory backup battery CR2032	     Onboard	                   O	                  O	                  O	             O
+//      Vbat	Memory backup battery CR2032	         Onboard	                   O	                  O	                  O	             O
 // the US-100 module WITH jumper cap on the back.
 
 
@@ -54,7 +55,7 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 #define baseLoopTime  206      //Estimated loop time in millisecond
 #define debounceDelay 50    // Debounce time for valve position readswitch
 #define fastSampling  1000UL   // in milliseconds
-#define slowSampling  5000UL    // in milliseconds
+#define slowSampling  3000UL    // in milliseconds
 #define numReadings 10           // Number of readings to average for filtering
 #define minDistChange 2.0 * numReadings      // Minimum change in distance to publish an event (1/16")
 #define minTempChange 0.5 * numReadings      // Minimum temperature change to publish an event
@@ -72,10 +73,10 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 #define evUS100Distance 2
 #define evUS100Temperature 3
 #define evOutOfRange 4
-#define evValve1OpenSensor 5
-#define evValve1CloseSensor 6
-#define evValve2OpenSensor 7
-#define evValve2CloseSensor 8
+#define evValve1_OpenSensorState 5      //Active low
+#define evValve1_CloseSensorState 6     //Active low
+#define evValve2_OpenSensorState 7      //Active low
+#define evValve2_CloseSensorState 8     //Active low
 #define evRelais 9
 #define evVacuum 10
 #define evDebit 11
@@ -85,8 +86,6 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 #define evTempExterne 15
 #define evHeating 16
 #define evMB7389Distance 17
-#define evBootTime 18
-#define evNewGenSN 19
 
 
 // Variables lié aux événements
@@ -94,7 +93,7 @@ String eventName[] = {
     "sonde/Pompe/T1",
     "sonde/Pompe/T2",
     "sonde/US100/Distance",
-    "sonde/US100/Temperature_US100",
+    "sonde/US100/Temperature",
     "sonde/Hors portée: ",
     "sonde/Valve1/OpenSensor",
     "sonde/Valve1/CloseSensor",
@@ -102,15 +101,13 @@ String eventName[] = {
     "sonde/Valve2/CloseSensor",
     "sortie/Relais",
     "sonde/Vacuum",
-    "sonde/Débit",
+    "sonde/flowmeter/Débit",
     "calcul/Volume",
     "sonde/Pression Atmosphérique",
     "sonde/DS18B20/Température interne",
     "sonde/DS18B20/Température externe",
     "sortie/Chauffage boitier",
-    "sonde/MB7389/Distance",
-    "Boot timestamp",
-    "NewGenSN"
+    "sonde/MB7389/Distance"
     };
 
 // Structure définissant un événement
@@ -120,14 +117,19 @@ typedef struct Event{
   int16_t eData;  // Données pour cet événement. Entier 16 bits. Pour sauvegarder des données en point flottant
                   // multiplié d'abord la donnée par un facteur (1000 par ex.) en convertir en entier.
                   // Il suffira de divisé la données au moment de la réception de l'événement.
-  unsigned long NewGenTimeStamp; // Contient le timestamp initiale de cette génération de no serie
   unsigned long eTime; // Temps depuis la mise en marche du capteur. Overflow après 49 jours.
 };
+// Variable relié à l'opération du buffer circulaire
 const int buffSize = 300; // Nombre max d'événements que l'on peut sauvegarder
 retained unsigned int buffLen = 0;
 retained unsigned int writePtr = 0;
 retained unsigned int readPtr = 0;
+retained unsigned int replayPtr = 0;
+unsigned int replayBuffLen = 0;
 retained struct Event eventBuffer[buffSize];
+
+// Name space utilisé pour les événements
+// DomainName/DeptName/FunctionName/SubFunctionName/ValueName
 String DomainName = "brunelle/";
 String DeptName = "prod/";
 
@@ -149,15 +151,15 @@ unsigned long changeTime = 0;
 // Variables liés aux valves
 int ValvePos_pin[] = {A5, A4, A3, A2};
 bool ValvePos_state[] = {true, true, true, true};
-int ValvePos_Name[] = {evValve1OpenSensor, evValve1CloseSensor, evValve2OpenSensor, evValve2CloseSensor};
+int ValvePos_Name[] = {evValve1_OpenSensorState, evValve1_CloseSensorState, evValve2_OpenSensorState, evValve2_CloseSensorState};
 
 // Variables liés à la mesure de Température
 unsigned int HighLen = 0;
 unsigned int LowLen  = 0;
 int TempUS100 = 0;
 int prev_TempUS100 = 0;
-int prev_TempExterne = 999;
-int prev_TempInterne = 999;
+int prev_TempExterne = 99;
+int prev_TempInterne = 99;
 int allTempReadings[numReadings];
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature ds18b20Sensors(&oneWire);
@@ -183,7 +185,6 @@ unsigned long nextSampleTime = 0;
 int maxPublishInterval = 2;
 unsigned long maxPublishDelay = maxPublishInterval * minute;
 unsigned long lastTime = 0UL;
-time_t NewGenTimeStamp;
 
 // Variables liés aux publications
 char publishString[buffSize];
@@ -197,6 +198,7 @@ String Dist_MB7389Str;
 int MB7389latestReading = 0;
 int R = 82;
 int CR = 13;
+
 
 /*
    handler to receive the module name
@@ -232,7 +234,7 @@ class ExternalRGB {
 };
 
 // Connect an external RGB LED to D0, D1 and D2 (R, G, and B)
-ExternalRGB myRGB(RGBled_Red, RGBled_Green, RGBLed_Blue);
+ExternalRGB myRGB(D0, D1, D2);
 
 /*
 // Attach interrupt handler to pin A0 to monitor pump Start/Stop
@@ -271,7 +273,6 @@ void printAddress(DeviceAddress deviceAddress)
   Serial.println();
 }
 
-// Initialisation
 void setup() {
 // connect RX to Echo/Rx (US-100), TX to Trig/Tx (US-100)
     Serial.begin(115200); // Pour débug
@@ -289,6 +290,7 @@ void setup() {
     Serial.println("Enregistrement des variables et fonctions\n");
     Particle.variable("relayState", RelayState);
     Particle.variable("DS18B20Cnt", ds18b20Count);
+
     Particle.function("relay", toggleRelay);
     Particle.function("pubInterval", setPublishInterval);
     Particle.function("reset", remoteReset);
@@ -316,6 +318,10 @@ void setup() {
         }
 
     delay(1000UL);
+// check taht all buffer pointers are ok.
+    checkPtrState();
+    replayBuffLen = 0;
+    replayPtr = readPtr;
 
 // initialisation des capteurs de températures
     initDS18B20Sensors();
@@ -344,15 +350,6 @@ void setup() {
 
     lastPublish = millis(); //Initialise le temps initial de publication
     changeTime = lastPublish; //Initialise le temps initial de changement de la pompe
-    time_t bootTimeStamp = Time.now();
-    Serial.printlnf("Boot timestamp: %u", bootTimeStamp);
-
-    /*
-    Note:
-    La position de eTime et de eData sont inversé dans ce cas-ci
-    eTime est de type int et ne peux contenir le timestamp
-    */
-    pushToPublishQueue(evBootTime, millis(), bootTimeStamp);
 }
 
 /*
@@ -475,7 +472,7 @@ void readAllSensors() {
     now = millis();
     if (now - lastPublish > maxPublishDelay){
             lastPublish = now;
-            pushToPublishQueue(evUS100Distance, (int)(dist_mm / numReadings), now);
+            pushToPublishQueue(evMB7389Distance, (int)(dist_mm / numReadings), now);
             if (ds18b20Count == 1){
                 pushToPublishQueue(evTempInterne, (int)prev_TempInterne, now);
             } else if (ds18b20Count == 2){
@@ -490,14 +487,15 @@ void readAllSensors() {
         Particle.syncTime();
         lastSync = millis();
     }
-// Publié les événements se trouvant dans le buffer
+// Publier les événements se trouvant dans le buffer
     if(buffLen > 0){
         Serial.printlnf("BufferLen = %u, Cloud = %s", buffLen, (Particle.connected() ? "true" : "false"));
         bool success = publishQueuedEvents();
         Serial.printlnf("Publishing = %u, Status: %s", readPtr - 1, (success ? "Fait" : "Pas Fait"));
+    } else if (replayBuffLen > 0){
+        bool success = replayQueuedEvents();
+        Serial.printlnf("replayBuffLen = %u, Replay = %u, Status: %s", replayBuffLen, replayPtr, (success ? "Fait" : "Pas Fait"));
     }
-//    Serial.println("call readDS18b20temp");
-    // killTime(samplingInterval); // Maintient la boucle sur une base de 1 second
 }
 
 // Cette routine mesure la distance entre la surface de l'eau et le capteur ultason
@@ -505,7 +503,7 @@ void ReadDistance_US100(){
     int currentReading;
     Serial1.flush();                                // clear receive buffer of serial port
     Serial1.write(0X55);                            // trig US-100 begin to measure the distance
-    delay(100);                                     // delay 100ms to wait result
+    delay(100UL);                                     // delay 100ms to wait result
     if(Serial1.available() >= 2)                    // when receive 2 bytes
     {
         HighLen = Serial1.read();                   // High byte of distance
@@ -517,18 +515,17 @@ void ReadDistance_US100(){
             Serial.printlnf("Dist.: %dmm, now= %d, lastPublish= %d, RSSI= %d", (int)(dist_mm / numReadings), now, lastPublish, WiFi.RSSI());
             if (abs(dist_mm - prev_dist_mm) > minDistChange){         // Publish event in case of a change in temperature
                     lastPublish = now;                               // reset the max publish delay counter.
-                    pushToPublishQueue(evUS100Distance, (int)(dist_mm / numReadings), now);
+                    pushToPublishQueue(evMB7389Distance, (int)(dist_mm / numReadings), now);
                     prev_dist_mm = dist_mm;
                     samplingInterval = fastSampling;   //Measurements NOT stable, increase the sampling frequency
                 }
 
         } else {
-            /*Particle.publish("Hors portée: ","9999",60,PRIVATE);*/
             pushToPublishQueue(evOutOfRange, 9999, now);
             Serial.print("Hors portée: ");             // output distance to serial monitor
             Serial.print(currentReading, DEC);
             Serial.println("mm ");
-            delay(2000);
+            // delay(2000);
         }
     } else {
         Serial.println("Données non disponible");
@@ -537,10 +534,10 @@ void ReadDistance_US100(){
 
 // Cette routine mesure la distance entre la surface de l'eau et le capteur ultason
 void ReadDistance_MB7389(){
-    int lastReading = MB7389latestReading;
+    int currentReading = MB7389latestReading;
     Serial.printlnf("MB7389latestReading: %d", MB7389latestReading);
-    if((lastReading > 1) && (lastReading < maxRangeMB7389)){       // normal distance should between 1mm and 2500 mm (1mm, 2,5m)
-        dist_mm = AvgDistReading(lastReading); // Average the distance readings
+    if((currentReading > 1) && (currentReading < maxRangeMB7389)){       // normal distance should between 1mm and 2500 mm (1mm, 2,5m)
+        dist_mm = AvgDistReading(currentReading); // Average the distance readings
         Serial.printlnf("Dist.: %dmm, now= %d, lastPublish= %d, RSSI= %d", (int)(dist_mm / numReadings), now, lastPublish, WiFi.RSSI());
         if (abs(dist_mm - prev_dist_mm) > minDistChange){         // Publish event in case of a change in temperature
                 lastPublish = now;                               // reset the max publish delay counter.
@@ -552,7 +549,7 @@ void ReadDistance_MB7389(){
     } else {
         pushToPublishQueue(evOutOfRange, 9999, now);
         Serial.print("Hors portée: ");             // output distance to serial monitor
-        Serial.print(lastReading, DEC);
+        Serial.print(currentReading, DEC);
         Serial.println("mm ");
     }
  }
@@ -708,6 +705,7 @@ bool isValidDs18b20Reading(float reading){
         return false;
     }
 }
+
 // Imprémentation d'un thermostat simple ON/OFF
 // La routine ne fonctionne que si un capteur de température interne est trouvé
 int simpleThermostat(double setPoint){
@@ -751,9 +749,9 @@ void CheckValvePos(){
             ValvePos_state[i] = valveCurrentState;
             now = millis();
             if (valveCurrentState == true){
-                stateStr = "Ouvert";
+                stateStr = "/Open";
             } else {
-                stateStr = "Fermé";
+                stateStr = "/Undefined";
             }
             Serial.println(DomainName + DeptName + eventName[ValvePos_Name[i]] + ": " + stateStr );
             pushToPublishQueue(ValvePos_Name[i], valveCurrentState, now);
@@ -794,26 +792,15 @@ int setPublishInterval(String command){
     }
 }
 
-// Pour reseter le capteur à distance au besoin
+// Pour resetter le capteur à distance au besoin
 int remoteReset(String command) {
-    if(command == "device"){
+    /*Serial.println("Resetting...");*/
+    if (command == "device"){
         System.reset();
-    } else if (command == "serialNo"){
-        NewGenTimeStamp = Time.now();
-        Serial.printlnf("Nouvelle génération de no de série", NewGenTimeStamp);
-        /*
-        Note:
-        La position de eTime et de eData sont inversé dans ce cas-ci
-        eTime est de type int et ne peux contenir le timestamp
-        */
-        /*noSerie = 0; // reset serial no to 0*/
-        pushToPublishQueue(evNewGenSN, millis(), NewGenTimeStamp);
+// ou juste les numéros de série.
+    } else if (command == "serialNo") {
+        noSerie = 0;
     }
-}
-
-// Permet de demander un of des événements manquants
-bool replayEvent(String command){
-    return true;
 }
 
 // Formattage standard pour les données sous forme JSON
@@ -841,7 +828,7 @@ bool publishQueuedEvents(){
     bool publishSuccess = false;
     struct Event thisEvent = {};
     Serial.println("<<<< publishQueuedEvents:::");
-    thisEvent = peekEvent();
+    thisEvent = peekEvent(readPtr);
     if (sizeof(thisEvent) == 0){
         return publishSuccess; // Rien à publié
     }
@@ -850,7 +837,8 @@ bool publishQueuedEvents(){
           connWasLost =  false;
           delay(2000); // Gives some time to avoid loosing events
         }
-        publishSuccess = Particle.publish(DomainName + DeptName + eventName[thisEvent.namePtr], makeJSON(thisEvent.noSerie, thisEvent.eData, thisEvent.eTime, DomainName + DeptName + eventName[thisEvent.namePtr]), 60, PRIVATE);
+        publishSuccess = Particle.publish(DomainName + DeptName + eventName[thisEvent.namePtr],
+                                            makeJSON(thisEvent.noSerie, thisEvent.eData, thisEvent.eTime, DomainName + DeptName + eventName[thisEvent.namePtr]), 60, PRIVATE);
         if (publishSuccess){
         readEvent(); // Avance le pointeur de lecture
         }
@@ -860,6 +848,72 @@ bool publishQueuedEvents(){
   return publishSuccess;
 }
 
+// Publie un événement stocké en mémoire
+bool replayQueuedEvents(){
+    bool publishSuccess = false;
+    struct Event thisEvent = {};
+    Serial.println("&&&& replayQueuedEvents:::");
+    thisEvent = peekEvent(replayPtr);
+    if (sizeof(thisEvent) == 0){
+        return publishSuccess; // Rien à publié
+    }
+    if(Particle.connected()){
+        if (connWasLost){
+          connWasLost =  false;
+          delay(2000); // Gives some time to avoid loosing events
+        }
+        publishSuccess = Particle.publish(DomainName + "replay/" + eventName[thisEvent.namePtr],
+                                            makeJSON(thisEvent.noSerie, thisEvent.eData, thisEvent.eTime, DomainName + DeptName + eventName[thisEvent.namePtr]), 60, PRIVATE);
+        if (publishSuccess){
+        replayReadEvent(); // Avance le pointeur de lecture
+        }
+    } else {
+     connWasLost = true;
+    }
+  return publishSuccess;
+}
+
+// Permet de demander un replay des événements manquants
+// Initialise les paramètres pour la routine replayQueuedEvents()
+bool replayEvent(String command){
+    int targetSerNo = command.toInt();
+    Serial.printlnf("?????? Demande de replay Event no: %d,  writePtr= %u, readPtr= %u, replayBuffLen= %u",
+                    targetSerNo, writePtr, readPtr, replayBuffLen);
+
+    if (replayBuffLen > 0){
+        return false; // La requête précédente n'est pas encore complête - Attendre
+    }
+    // Validation de la demande
+    if (targetSerNo >= 0){ // Le numéro recherché doit être plus grand que 0
+        // Validation
+        if (targetSerNo >= noSerie){ // et plus petit que le numéro de série courant
+            return false;
+        }
+        if ((noSerie - targetSerNo) > buffSize){ // Il y a 300 événement au maximum dans le buffer
+            /*targetSerNo = noSerie - buffSize;*/
+            return false;
+        }
+        // Calcul de la position de l'événement dans le buffer
+        int tmpPtr = readPtr - (noSerie - targetSerNo);  // Position dans le buffer du premier événement à faire un playback
+        if (tmpPtr < 0){
+            replayPtr =  tmpPtr + buffSize;
+        } else {
+            replayPtr =  tmpPtr;
+        }
+        // calcul de la longueur du replayBuffLen
+        if ((readPtr - replayPtr) < 0){
+            replayBuffLen = readPtr - replayPtr + buffSize;
+        } else {
+            replayBuffLen = readPtr - replayPtr;
+        }
+        Serial.printlnf("?????? Accepté pour replay Event no: %d, ReplayPtr= %u, writePtr= %u, readPtr= %u, replayBuffLen= %u, No de série courant= %u",
+                        targetSerNo, replayPtr, writePtr, readPtr, replayBuffLen, noSerie);
+        return true;
+    } else {
+        return false;
+    }
+}
+
 // Sauvegarde d'un événement en mémoire
 bool writeEvent(struct Event thisEvent){
   if (readPtr == (writePtr + 1) % buffSize){
@@ -867,8 +921,12 @@ bool writeEvent(struct Event thisEvent){
   }
   eventBuffer[writePtr] = thisEvent;
   writePtr = (writePtr + 1) % buffSize; // avancer writePtr
-  buffLen = writePtr - readPtr;
-  //pour debug
+  if ((writePtr - readPtr) < 0){
+      buffLen = writePtr - readPtr + buffSize;
+  } else {
+      buffLen = writePtr - readPtr;
+  }
+   //pour debug
   Serial.print("-------> " + DomainName + DeptName + eventName[thisEvent.namePtr]);
   Serial.printlnf(": writeEvent:: writePtr= %u, readPtr= %u, buffLen= %u, noSerie: %u, eData: %u, eTime: %u",
                                      writePtr, readPtr, buffLen, thisEvent.noSerie, thisEvent.eData, thisEvent.eTime);
@@ -885,7 +943,11 @@ struct Event readEvent(){
   }
   thisEvent = eventBuffer[readPtr];
   readPtr = (readPtr + 1) % buffSize;
-  buffLen = writePtr - readPtr;
+  if ((writePtr - readPtr) < 0){
+      buffLen = writePtr - readPtr + buffSize;
+  } else {
+      buffLen = writePtr - readPtr;
+  }
   //pour debug
   Serial.print("<------- " + DomainName + DeptName + eventName[thisEvent.namePtr]);
   Serial.printlnf(": readEvent:: writePtr= %u, readPtr= %u, buffLen= %u, noSerie: %u, eData: %u, eTime: %u",
@@ -893,19 +955,76 @@ struct Event readEvent(){
   return thisEvent;
 }
 
-// Lecture d'un événement en mémoire sans avancé le pointeur
-struct Event peekEvent(){
+// Lecture d'un événement en mémoire
+struct Event replayReadEvent(){
   struct Event thisEvent = {};
-  if (readPtr == writePtr){
-    Serial.printlnf(" ------- peekEvent:: writePtr= %u, readPtr= %u, buffLen= %u, *** buffer vide ***",
-                                      writePtr, readPtr, buffLen);
+  if (replayPtr == writePtr){
+    Serial.printlnf("\n<--&&--- replayReadEvent:: writePtr= %u, replayPtr= %u, replayBuffLen= %u, *** replay buffer vide ***",
+                                      writePtr, replayPtr, replayBuffLen);
     return thisEvent; // événement vide
   }
-  thisEvent = eventBuffer[readPtr];
-  //buffLen = writePtr - readPtr;
+  thisEvent = eventBuffer[replayPtr];
+  replayPtr = (replayPtr + 1) % buffSize; // increment replay pointer
+  if ((writePtr - replayPtr) < 0){
+      replayBuffLen = writePtr - replayPtr + buffSize;
+  } else {
+      replayBuffLen = writePtr - replayPtr;
+  }
+
   //pour debug
+  Serial.print("<------- " + DomainName + "replay/" + eventName[thisEvent.namePtr]);
+  Serial.printlnf(": readEvent:: writePtr= %u, replayPtr= %u, replayBuffLen= %u, noSerie: %u, eData: %u, eTime: %u",
+                                    writePtr, replayPtr, replayBuffLen, thisEvent.noSerie, thisEvent.eData, thisEvent.eTime);
+  return thisEvent;
+}
+
+// Lecture d'un événement en mémoire sans avancé le pointeur
+struct Event peekEvent(uint16_t peekReadPtr){
+  struct Event thisEvent = {};
+  if (peekReadPtr == writePtr){
+    Serial.printlnf(" ------- peekEvent:: writePtr= %u, peekReadPtr= %u, buffLen= %u, *** buffer vide ***",
+                                      writePtr, peekReadPtr, buffLen);
+    return thisEvent; // événement vide
+  }
+  thisEvent = eventBuffer[peekReadPtr];
+   //pour debug
   Serial.print(" ------- " + eventName[thisEvent.namePtr]);
   Serial.printlnf(": peekEvent:: writePtr= %u, readPtr= %u, buffLen= %u, noSerie: %u, eData: %u, eTime: %u",
-                                    writePtr, readPtr, buffLen, thisEvent.noSerie, thisEvent.eData, thisEvent.eTime);
+                                    writePtr, peekReadPtr, buffLen, thisEvent.noSerie, thisEvent.eData, thisEvent.eTime);
   return thisEvent;
+}
+
+// check buffer pointers and length consistency
+void checkPtrState(){
+    uint16_t tmp;
+// check readPtr
+    tmp = readPtr;
+    if (readPtr > buffSize) {
+        if (writePtr < buffSize){
+            readPtr = writePtr;
+        }
+    }
+    Serial.printlnf("Checked readPtr --> was:%u, now:%u", tmp, readPtr);
+// check writePtr
+    tmp = writePtr;
+    if (writePtr > buffSize) {
+        if (readPtr < buffSize){
+            writePtr = readPtr;
+        }
+    }
+    Serial.printlnf("Checked writePtr --> was:%u, now:%u", tmp, writePtr);
+// check buffLen
+    tmp = buffLen;
+    if (buffLen > buffSize){
+        // inconsistance: reset pointers to 0
+        readPtr  = 0;
+        writePtr = 0;
+    }
+// calcul le buffLen
+    if ((writePtr - readPtr) < 0){
+        buffLen = writePtr - readPtr + buffSize;
+    } else {
+        buffLen = writePtr - readPtr;
+    }
+    Serial.printlnf("Checked buffLen --> was:%u, now:%u", tmp, buffLen);
 }
