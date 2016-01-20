@@ -5,28 +5,28 @@
 // Photon Pin	Fonction		                    Location                |Capteur Standard	|Capteur Robuste	|Capteur On / Off	|Commun
 //      D6	     SSR Relay 	                         Ext.	                        	                   	                  O
 //      A0	     Signal moteur opto couplé - IAC5A	 Onboard	                    	                   	                  O
-//      A1	     Signal moteur par Current xformer	 Ext.                           	                                    O
-//      A2	     Valve 1A	                           Ext.                        O                    O
-//      A3	     Valve 1B	                           Ext.	                       O	                  O
-//      A4	     Valve 2A	                           Ext.	                       O	                  O
-//      A5	     Valve 2B	                           Ext.	                       O	                  O
-//      D2 (pwm)	RGB Led Red	                       Onboard	                   O	                  O	                  O	             O
-//      D1 (pwm)	RGB Led Green	                     Onboard	                   O	                  O	                  O	             O
-//      D0 (pwm)	RGB Led Blue	                     Onboard	                   O	                  O	                  O	             O
-//      D7	Activity Blue LED	                       Onboard	                   O	                  O	                  O	             O
+//      A1	     Signal moteur par Current xformer	 Ext.                           	                                      O
+//      A2	     Valve 1A	                         Ext.                          O                      O
+//      A3	     Valve 1B	                         Ext.	                       O	                  O
+//      A4	     Valve 2A	                         Ext.	                       O	                  O
+//      A5	     Valve 2B	                         Ext.	                       O	                  O
+//      D2 (pwm)	RGB Led Red	                     Onboard	                   O	                  O	                  O	             O
+//      D1 (pwm)	RGB Led Green	                 Onboard	                   O	                  O	                  O	             O
+//      D0 (pwm)	RGB Led Blue	                 Onboard	                   O	                  O	                  O	             O
+//      D7	Activity Blue LED	                     Onboard	                   O	                  O	                  O	             O
 //      3V3	US-100 Pin 1 - Vcc	                     Onboard	                   O
-//      Tx	US-100 Pin 2 - Trig /  Tx	               Onboard	                   O
-//      Rx	US-100 Pin 3 - Echo / Rx	               Onboard	                   O
+//      Tx	US-100 Pin 2 - Trig /  Tx	             Onboard	                   O
+//      Rx	US-100 Pin 3 - Echo / Rx	             Onboard	                   O
 //      Gnd	US-100 Pin 4 - Gnd	                     Onboard	                   O
 //      Gnd	US-100 Pin 5 - Gnd	                     Onboard	                   O
 //      3V3	XL-Max Sonar MB7389 Pin 1 - Nc or High	 Ext.	                        	                  O
-//      D5	XL-Max Sonar MB7389 Pin 2 - Pulse out	   Ext.	                        	                  O
-//      Tx	XL-Max Sonar MB7389 Pin 4 - Trig 20uS	   Ext.	                                            O
+//      D5	XL-Max Sonar MB7389 Pin 2 - Pulse out	 Ext.	                        	                  O
+//      Tx	XL-Max Sonar MB7389 Pin 4 - Trig 20uS	 Ext.	                                              O
 //      Rx	XL-Max Sonar MB7389 Pin 5 - Serial out	 Ext.	                        	                  O
-//      Gnd	XL-Max Sonar MB7389 Pin 7 - Gnd	         Ext.	                                            O
-//      D4	Dallas 18b20 Temperature sensor	         Onboard / Ext.	             O	                  O	                  O	             O
+//      Gnd	XL-Max Sonar MB7389 Pin 7 - Gnd	         Ext.	                                              O
+//      D4	Dallas 18b20 Temperature sensor	         Onboard / Ext.	               O	                  O	                  O	             O
 //      D3	Heating circuit. Power control	         Onboard	                     	                  O
-//      Vbat	Memory backup battery CR2032	         Onboard	                   O	                  O	                  O	             O
+//      Vbat	Memory backup battery CR2032	     Onboard	                   O	                  O	                  O	             O
 // the US-100 module WITH jumper cap on the back.
 
 
@@ -69,13 +69,13 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 // Nom des indices du tableau eventName
 #define evPompe_T1 0
 #define evPompe_T2 1
-#define evDistance 2
-#define evTemperature_US100 3
+#define evUS100Distance 2
+#define evUS100Temperature 3
 #define evOutOfRange 4
-#define evValve_A 5
-#define evValve_B 6
-#define evValve_C 7
-#define evValve_D 8
+#define evValve1OpenSensor 5
+#define evValve1CloseSensor 6
+#define evValve2OpenSensor 7
+#define evValve2CloseSensor 8
 #define evRelais 9
 #define evVacuum 10
 #define evDebit 11
@@ -84,27 +84,33 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 #define evTempInterne 14
 #define evTempExterne 15
 #define evHeating 16
+#define evMB7389Distance 17
+#define evBootTime 18
+#define evNewGenSN 19
 
 
 // Variables lié aux événements
 String eventName[] = {
-    "sonde/Pompe_T1",
-    "sonde/Pompe_T2",
-    "sonde/Distance",
-    "sonde/Temperature_US100",
+    "sonde/Pompe/T1",
+    "sonde/Pompe/T2",
+    "sonde/US100/Distance",
+    "sonde/US100/Temperature_US100",
     "sonde/Hors portée: ",
-    "sonde/Valve1_Open",
-    "sonde/Valve1_Close",
-    "sonde/Valve2_Open",
-    "sonde/Valve2_Close",
+    "sonde/Valve1/OpenSensor",
+    "sonde/Valve1/CloseSensor",
+    "sonde/Valve2/OpenSensor",
+    "sonde/Valve2/CloseSensor",
     "sortie/Relais",
     "sonde/Vacuum",
     "sonde/Débit",
-    "sonde/Volume",
+    "calcul/Volume",
     "sonde/Pression Atmosphérique",
-    "sonde/Température interne",
-    "sonde/Température externe",
-    "sortie/Chauffage boitier"
+    "sonde/DS18B20/Température interne",
+    "sonde/DS18B20/Température externe",
+    "sortie/Chauffage boitier",
+    "sonde/MB7389/Distance",
+    "Boot timestamp",
+    "NewGenSN"
     };
 
 // Structure définissant un événement
@@ -114,6 +120,7 @@ typedef struct Event{
   int16_t eData;  // Données pour cet événement. Entier 16 bits. Pour sauvegarder des données en point flottant
                   // multiplié d'abord la donnée par un facteur (1000 par ex.) en convertir en entier.
                   // Il suffira de divisé la données au moment de la réception de l'événement.
+  unsigned long NewGenTimeStamp; // Contient le timestamp initiale de cette génération de no serie
   unsigned long eTime; // Temps depuis la mise en marche du capteur. Overflow après 49 jours.
 };
 const int buffSize = 300; // Nombre max d'événements que l'on peut sauvegarder
@@ -142,15 +149,15 @@ unsigned long changeTime = 0;
 // Variables liés aux valves
 int ValvePos_pin[] = {A5, A4, A3, A2};
 bool ValvePos_state[] = {true, true, true, true};
-int ValvePos_Name[] = {evValve_A, evValve_B, evValve_C, evValve_D};
+int ValvePos_Name[] = {evValve1OpenSensor, evValve1CloseSensor, evValve2OpenSensor, evValve2CloseSensor};
 
 // Variables liés à la mesure de Température
 unsigned int HighLen = 0;
 unsigned int LowLen  = 0;
 int TempUS100 = 0;
 int prev_TempUS100 = 0;
-int prev_TempExterne = 99;
-int prev_TempInterne = 99;
+int prev_TempExterne = 999;
+int prev_TempInterne = 999;
 int allTempReadings[numReadings];
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature ds18b20Sensors(&oneWire);
@@ -176,6 +183,7 @@ unsigned long nextSampleTime = 0;
 int maxPublishInterval = 2;
 unsigned long maxPublishDelay = maxPublishInterval * minute;
 unsigned long lastTime = 0UL;
+time_t NewGenTimeStamp;
 
 // Variables liés aux publications
 char publishString[buffSize];
@@ -189,7 +197,6 @@ String Dist_MB7389Str;
 int MB7389latestReading = 0;
 int R = 82;
 int CR = 13;
-
 
 /*
    handler to receive the module name
@@ -225,7 +232,7 @@ class ExternalRGB {
 };
 
 // Connect an external RGB LED to D0, D1 and D2 (R, G, and B)
-ExternalRGB myRGB(D0, D1, D2);
+ExternalRGB myRGB(RGBled_Red, RGBled_Green, RGBLed_Blue);
 
 /*
 // Attach interrupt handler to pin A0 to monitor pump Start/Stop
@@ -250,7 +257,6 @@ class PumpState_A1 {
 };
 
 PumpState_A1 pumpState; // Instantiate the class A0State
-// Initialisation
 
 // function to print a device address
 void printAddress(DeviceAddress deviceAddress);
@@ -265,6 +271,7 @@ void printAddress(DeviceAddress deviceAddress)
   Serial.println();
 }
 
+// Initialisation
 void setup() {
 // connect RX to Echo/Rx (US-100), TX to Trig/Tx (US-100)
     Serial.begin(115200); // Pour débug
@@ -284,8 +291,8 @@ void setup() {
     Particle.variable("DS18B20Cnt", ds18b20Count);
     Particle.function("relay", toggleRelay);
     Particle.function("pubInterval", setPublishInterval);
-    Particle.function("reset", deviceReset);
-    Particle.function("getEvents", replayEvent);
+    Particle.function("reset", remoteReset);
+    Particle.function("replay", replayEvent);
 
     // Attendre la connection au nuage
         Serial.println("En attente... ");
@@ -337,6 +344,15 @@ void setup() {
 
     lastPublish = millis(); //Initialise le temps initial de publication
     changeTime = lastPublish; //Initialise le temps initial de changement de la pompe
+    time_t bootTimeStamp = Time.now();
+    Serial.printlnf("Boot timestamp: %u", bootTimeStamp);
+
+    /*
+    Note:
+    La position de eTime et de eData sont inversé dans ce cas-ci
+    eTime est de type int et ne peux contenir le timestamp
+    */
+    pushToPublishQueue(evBootTime, millis(), bootTimeStamp);
 }
 
 /*
@@ -459,7 +475,7 @@ void readAllSensors() {
     now = millis();
     if (now - lastPublish > maxPublishDelay){
             lastPublish = now;
-            pushToPublishQueue(evDistance, (int)(dist_mm / numReadings), now);
+            pushToPublishQueue(evUS100Distance, (int)(dist_mm / numReadings), now);
             if (ds18b20Count == 1){
                 pushToPublishQueue(evTempInterne, (int)prev_TempInterne, now);
             } else if (ds18b20Count == 2){
@@ -486,32 +502,33 @@ void readAllSensors() {
 
 // Cette routine mesure la distance entre la surface de l'eau et le capteur ultason
 void ReadDistance_US100(){
-    int lastReading;
+    int currentReading;
     Serial1.flush();                                // clear receive buffer of serial port
     Serial1.write(0X55);                            // trig US-100 begin to measure the distance
-    delay(100UL);                                     // delay 100ms to wait result
+    delay(100);                                     // delay 100ms to wait result
     if(Serial1.available() >= 2)                    // when receive 2 bytes
     {
         HighLen = Serial1.read();                   // High byte of distance
         LowLen  = Serial1.read();                   // Low byte of distance
-        lastReading = HighLen*256 + LowLen;          // Combine the two bytes
+        currentReading = HighLen*256 + LowLen;          // Combine the two bytes
 //        Len_mm  = (HighLen*256 + LowLen)/25.4;    // Calculate the distance in inch
-        if((lastReading > 1) && (lastReading < maxRangeUS100)){       // normal distance should between 1mm and 2500 mm (1mm, 2,5m)
-            dist_mm = AvgDistReading(lastReading); // Average the distance readings
+        if((currentReading > 1) && (currentReading < maxRangeUS100)){       // normal distance should between 1mm and 2500 mm (1mm, 2,5m)
+            dist_mm = AvgDistReading(currentReading); // Average the distance readings
             Serial.printlnf("Dist.: %dmm, now= %d, lastPublish= %d, RSSI= %d", (int)(dist_mm / numReadings), now, lastPublish, WiFi.RSSI());
             if (abs(dist_mm - prev_dist_mm) > minDistChange){         // Publish event in case of a change in temperature
                     lastPublish = now;                               // reset the max publish delay counter.
-                    pushToPublishQueue(evDistance, (int)(dist_mm / numReadings), now);
+                    pushToPublishQueue(evUS100Distance, (int)(dist_mm / numReadings), now);
                     prev_dist_mm = dist_mm;
                     samplingInterval = fastSampling;   //Measurements NOT stable, increase the sampling frequency
                 }
 
         } else {
+            /*Particle.publish("Hors portée: ","9999",60,PRIVATE);*/
             pushToPublishQueue(evOutOfRange, 9999, now);
             Serial.print("Hors portée: ");             // output distance to serial monitor
-            Serial.print(lastReading, DEC);
+            Serial.print(currentReading, DEC);
             Serial.println("mm ");
-            // delay(2000);
+            delay(2000);
         }
     } else {
         Serial.println("Données non disponible");
@@ -527,7 +544,7 @@ void ReadDistance_MB7389(){
         Serial.printlnf("Dist.: %dmm, now= %d, lastPublish= %d, RSSI= %d", (int)(dist_mm / numReadings), now, lastPublish, WiFi.RSSI());
         if (abs(dist_mm - prev_dist_mm) > minDistChange){         // Publish event in case of a change in temperature
                 lastPublish = now;                               // reset the max publish delay counter.
-                pushToPublishQueue(evDistance, (int)(dist_mm / numReadings), now);
+                pushToPublishQueue(evMB7389Distance, (int)(dist_mm / numReadings), now);
                 prev_dist_mm = dist_mm;
                 samplingInterval = fastSampling;   //Measurements NOT stable, increase the sampling frequency
             }
@@ -556,7 +573,7 @@ void Readtemp_US100(){
             Serial.printlnf("Temp.:%dC now= %d, lastPublish= %d",  (int)(TempUS100/ numReadings), now, lastPublish);
             if (abs(TempUS100 - prev_TempUS100) > minTempChange){         // Publish event in case of a change in temperature
                     lastPublish = now;                               // reset the max publish delay counter.
-                    pushToPublishQueue(evTemperature_US100, (int)(TempUS100/ numReadings), now);
+                    pushToPublishQueue(evUS100Temperature, (int)(TempUS100/ numReadings), now);
                     prev_TempUS100 = TempUS100;
                     samplingInterval = fastSampling;   //Measurements NOT stable, increase the sampling frequency
                 }
@@ -744,17 +761,6 @@ void CheckValvePos(){
     }
 }
 
-void killTime(unsigned long interval){
-    for (unsigned long i=0 ; i < 2 * interval ; i++){
-        CheckValvePos();
-        if (i == 0){
-            delay(0.5 * second - baseLoopTime); // Delay required to make the loop approx. samplingInterval seconds.
-        } else {
-            delay(0.5 * second);
-        }
-     }
-}
-
 // Active ou désactive le relais SSR
 int toggleRelay(String command) {
     if (command=="on" || command=="1") {
@@ -789,9 +795,20 @@ int setPublishInterval(String command){
 }
 
 // Pour reseter le capteur à distance au besoin
-int deviceReset(String command) {
-    /*Serial.println("Resetting...");*/
-    System.reset();
+int remoteReset(String command) {
+    if(command == "device"){
+        System.reset();
+    } else if (command == "serialNo"){
+        NewGenTimeStamp = Time.now();
+        Serial.printlnf("Nouvelle génération de no de série", NewGenTimeStamp);
+        /*
+        Note:
+        La position de eTime et de eData sont inversé dans ce cas-ci
+        eTime est de type int et ne peux contenir le timestamp
+        */
+        /*noSerie = 0; // reset serial no to 0*/
+        pushToPublishQueue(evNewGenSN, millis(), NewGenTimeStamp);
+    }
 }
 
 // Permet de demander un of des événements manquants

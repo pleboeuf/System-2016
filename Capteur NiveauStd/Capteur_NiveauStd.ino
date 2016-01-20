@@ -69,13 +69,13 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 // Nom des indices du tableau eventName
 #define evPompe_T1 0
 #define evPompe_T2 1
-#define evDistance 2
-#define evTemperature_US100 3
+#define evUS100Distance 2
+#define evUS100Temperature 3
 #define evOutOfRange 4
-#define evValve_A 5
-#define evValve_B 6
-#define evValve_C 7
-#define evValve_D 8
+#define evValve1OpenSensor 5
+#define evValve1CloseSensor 6
+#define evValve2OpenSensor 7
+#define evValve2CloseSensor 8
 #define evRelais 9
 #define evVacuum 10
 #define evDebit 11
@@ -84,27 +84,33 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 #define evTempInterne 14
 #define evTempExterne 15
 #define evHeating 16
+#define evMB7389Distance 17
+#define evBootTime 18
+#define evNewGenSN 19
 
 
 // Variables lié aux événements
 String eventName[] = {
-    "sonde/Pompe_T1",
-    "sonde/Pompe_T2",
-    "sonde/Distance",
-    "sonde/Temperature_US100",
+    "sonde/Pompe/T1",
+    "sonde/Pompe/T2",
+    "sonde/US100/Distance",
+    "sonde/US100/Temperature_US100",
     "sonde/Hors portée: ",
-    "sonde/Valve1_Open",
-    "sonde/Valve1_Close",
-    "sonde/Valve2_Open",
-    "sonde/Valve2_Close",
+    "sonde/Valve1/OpenSensor",
+    "sonde/Valve1/CloseSensor",
+    "sonde/Valve2/OpenSensor",
+    "sonde/Valve2/CloseSensor",
     "sortie/Relais",
     "sonde/Vacuum",
     "sonde/Débit",
-    "sonde/Volume",
+    "calcul/Volume",
     "sonde/Pression Atmosphérique",
-    "sonde/Température interne",
-    "sonde/Température externe",
-    "sortie/Chauffage boitier"
+    "sonde/DS18B20/Température interne",
+    "sonde/DS18B20/Température externe",
+    "sortie/Chauffage boitier",
+    "sonde/MB7389/Distance",
+    "Boot timestamp",
+    "NewGenSN"
     };
 
 // Structure définissant un événement
@@ -116,10 +122,12 @@ typedef struct Event{
                    // Il suffira de divisé la données au moment de la réception de l'événement.
   unsigned long eTime; // Temps depuis la mise en marche du capteur. Overflow après 49 jours.
 };
-const int buffSize = 300; // Nombre max d'événements que l'on peut sauvegarder
-unsigned int buffLen = 0;
-retained unsigned int writePtr = 0;
-retained unsigned int readPtr = 0;
+const uint8_t buffSize = 300; // Nombre max d'événements que l'on peut sauvegarder
+retained uint8_t buffLen = 0;
+retained uint8_t writePtr = 0;
+retained uint8_t readPtr = 0;
+retained uint8_t replayPtr = 0;
+retained uint8_t replayBuffLen = 0;
 retained struct Event eventBuffer[buffSize];
 String DomainName = "brunelle/";
 String DeptName = "prod/";
@@ -130,7 +138,7 @@ int RGBled_Green = D1;
 int RGBLed_Blue = D2;
 int led = D7; // Feedback led
 int ssrRelay = D6; // Solid state relay
-int ssrRelayState = false;
+int RelayState = false;
 int motorState = A0; // input pour Pompe marche/arrêt
 int heater = D3; //Contrôle le transistor du chauffage
 
@@ -142,14 +150,25 @@ unsigned long changeTime = 0;
 // Variables liés aux valves
 int ValvePos_pin[] = {A2, A3, A4, A5};
 bool ValvePos_state[] = {true, true, true, true};
-int ValvePos_Name[] = {evValve_A, evValve_B, evValve_C, evValve_D};
+int ValvePos_Name[] = {evValve1OpenSensor, evValve1CloseSensor, evValve2OpenSensor, evValve2CloseSensor};
 
 // Variables liés à la mesure de Température
 unsigned int HighLen = 0;
 unsigned int LowLen  = 0;
-int Temp = 0;
-int prev_Temp = 0;
+int TempUS100 = 0;
+int prev_TempUS100 = 0;
+int prev_TempExterne = 999;
+int prev_TempInterne = 999;
 int allTempReadings[numReadings];
+/*OneWire oneWire(ONE_WIRE_BUS);
+DallasTemperature ds18b20Sensors(&oneWire);
+DeviceAddress enclosureThermometer, outsideThermometer;*/
+int ds18b20Count = 0;
+bool validTempExterne = false;
+bool validTempInterne = false;
+
+int HeatingPower = 0;
+int prev_HeatingPower = 64;
 
 // Variables liés à la mesure de distance
 int dist_mm  = 0;
@@ -157,14 +176,15 @@ int prev_dist_mm = 0;
 int allDistReadings[numReadings];
 
 // Variables liés au temps
-unsigned long lastPublish;
+unsigned long lastPublish = millis();
 unsigned long now;
 unsigned long lastSync = millis();
 unsigned int samplingInterval = fastSampling;
+unsigned long nextSampleTime = 0;
 int maxPublishInterval = 2;
 unsigned long maxPublishDelay = maxPublishInterval * minute;
 unsigned long lastTime = 0UL;
-unsigned long nextSampleTime;
+time_t NewGenTimeStamp;
 
 // Variables liés aux publications
 char publishString[buffSize];
@@ -173,13 +193,19 @@ int pumpEvent = 0;
 bool connWasLost = false;
 
 // Autre variables
-String myDeviceName = "";
+/*bool MB7389Valid = false;
+String Dist_MB7389Str;
+int MB7389latestReading = 0;
+int R = 82;
+int CR = 13;*/
+
 /*
 // handler to receive the module name
 */
+String myDeviceName = "";
 void nameHandler(const char *topic, const char *data) {
     myDeviceName =  String(data);
-    Serial.println("received " + String(topic) + ": " + String(data));
+    /*Serial.println("received " + String(topic) + ": " + String(data));*/
 }
 
 /*
@@ -233,18 +259,34 @@ class PumpState_A1 {
 
 PumpState_A1 pumpState; // Instantiate the class A0State
 
+/*// function to print a device address
+void printAddress(DeviceAddress deviceAddress);
+void printAddress(DeviceAddress deviceAddress)
+{
+  for (uint8_t i = 0; i < 8; i++)
+  {
+    if (deviceAddress[i] < 16) Serial.print("0");
+    Serial.print(deviceAddress[i], HEX);
+    Serial.print(" ");
+  }
+  Serial.println();
+}*/
+
+// Initialisation
 void setup() {
 // connect RX to Echo/Rx (US-100), TX to Trig/Tx (US-100)
     Serial.begin(115200);
     Serial1.begin(9600);  // Le capteur US-100 fonctionne à 9600 baud
     delay(300UL);
+
 // Enregistrement des fonctions et variables disponible par le nuage
-    Serial.printlnf("\nEnregistrement des variables et fonctions\n");
-    Particle.variable("relayState", ssrRelayState);
+    Serial.println("Enregistrement des variables et fonctions\n");
+    Particle.variable("relayState", RelayState);
+    /*Particle.variable("DS18B20Cnt", ds18b20Count);*/
     Particle.function("relay", toggleRelay);
     Particle.function("pubInterval", setPublishInterval);
-    Particle.function("reset", deviceReset);
-    Particle.function("getEvents", replayEvent);
+    Particle.function("reset", remoteReset);
+    Particle.function("replay", replayEvent);
 
     delay(3000); // Pour partir le moniteur série
 
@@ -292,7 +334,47 @@ void setup() {
 
     lastPublish = millis(); //Initialise le temps initial de publication
     changeTime = lastPublish; //Initialise le temps initial de changement de la pompe
+    time_t bootTimeStamp = Time.now();
+    Serial.printlnf("Boot timestamp: %u", bootTimeStamp);
+
+    /*
+    Note:
+    La position de eTime et de eData sont inversé dans ce cas-ci
+    eTime est de type int et ne peux contenir le timestamp
+    */
+    pushToPublishQueue(evBootTime, millis(), bootTimeStamp);
 }
+
+/*
+    Le capteur de distance MB7389 fonctionne en continu.
+    Cette routine reçoit les données séries et met le résultats dans une variable
+     Pour utilisation par la routine de measure
+*/
+
+/*void serialEvent1()
+{
+    char c = Serial1.read();
+
+// Début de séquence
+    if (c == R){
+        MB7389Valid = true;
+        Dist_MB7389Str = "";
+        return;
+    }
+
+// Fin de séquence
+    if (c == CR){
+        MB7389Valid = false;
+        MB7389latestReading = Dist_MB7389Str.toInt();
+        // Serial.println("Dist_MB7389Str= " + Dist_MB7389Str);
+        return;
+     }
+
+// Accumule des données
+    if (MB7389Valid == true){
+        Dist_MB7389Str += c;
+    }
+}*/
 
 /*
     Boucle principale
@@ -338,8 +420,8 @@ void readAllSensors() {
     if (now - lastPublish > maxPublishDelay)
         {
             lastPublish = now;
-            pushToPublishQueue(evDistance, (int)(dist_mm / numReadings), now);
-            pushToPublishQueue(evTemperature_US100, (int)(Temp/ numReadings), now);
+            pushToPublishQueue(evUS100Distance, (int)(dist_mm / numReadings), now);
+            pushToPublishQueue(evUS100Temperature, (int)(TempUS100/ numReadings), now);
             samplingInterval = slowSampling;   // Les mesure sont stable, réduire la fréquence de mesure.
         }
 
@@ -374,7 +456,7 @@ void ReadDistance_US100(){
             Serial.printlnf("Dist.: %dmm, now= %d, lastPublish= %d, RSSI= %d", (int)(dist_mm / numReadings), now, lastPublish, WiFi.RSSI());
             if (abs(dist_mm - prev_dist_mm) > minDistChange){         // Publish event in case of a change in temperature
                     lastPublish = now;                               // reset the max publish delay counter.
-                    pushToPublishQueue(evDistance, (int)(dist_mm / numReadings), now);
+                    pushToPublishQueue(evUS100Distance, (int)(dist_mm / numReadings), now);
                     prev_dist_mm = dist_mm;
                     samplingInterval = fastSampling;   //Measurements NOT stable, increase the sampling frequency
                 }
@@ -404,12 +486,12 @@ void Readtemp_US100(){
         Temp45 = Serial1.read();     // Lire la température brut
         if((Temp45 > 1) && (Temp45 < 130))   // Vérifier si la valeur est acceptable
         {
-            Temp = AvgTempReading(Temp45 - 45); //Conversion en température réelle et filtrage
-            Serial.printlnf("Temp.:%dC now= %d, lastPublish= %d",  (int)(Temp/ numReadings), now, lastPublish); // Pour debug
-            if (abs(Temp - prev_Temp) > minTempChange){    // Vérifier s'il y a eu changement depuis la dernière publication
+            TempUS100 = AvgTempReading(Temp45 - 45); //Conversion en température réelle et filtrage
+            Serial.printlnf("Temp.:%dC now= %d, lastPublish= %d",  (int)(TempUS100/ numReadings), now, lastPublish); // Pour debug
+            if (abs(TempUS100 - prev_TempUS100) > minTempChange){    // Vérifier s'il y a eu changement depuis la dernière publication
                     lastPublish = now;                     // Remise à zéro du compteur de délais de publication
-                    pushToPublishQueue(evTemperature_US100, (int)(Temp / numReadings), now); //Publication
-                    prev_Temp = Temp;                      //
+                    pushToPublishQueue(evUS100Temperature, (int)(TempUS100 / numReadings), now); //Publication
+                    prev_TempUS100 = TempUS100;                      //
                     samplingInterval = fastSampling;   // Augmenter la vitesse d'échantillonnage puisqu'il y a eu changement
                 }
         }
@@ -469,31 +551,20 @@ void CheckValvePos(){
     }
 }
 
-void killTime(unsigned long interval){
-    for (unsigned long i=0 ; i < 2 * interval ; i++){
-        CheckValvePos();
-        if (i == 0){
-            delay(0.5 * second - baseLoopTime); // Delay required to make the loop approx. samplingInterval seconds.
-        } else {
-            delay(0.5 * second);
-        }
-     }
-}
-
 // Active ou désactive le relais SSR
 int toggleRelay(String command) {
     if (command=="on" || command=="1") {
-        ssrRelayState = HIGH;
-        digitalWrite(ssrRelay, ssrRelayState);
+        RelayState = HIGH;
+        digitalWrite(ssrRelay, RelayState);
         /*Particle.publish("Relais", "on", 60, PRIVATE);*/
-        pushToPublishQueue(evRelais, ssrRelayState, now);
+        pushToPublishQueue(evRelais, RelayState, now);
         return 1;
     }
     else if (command=="off" || command=="0") {
-        ssrRelayState = LOW;
-        digitalWrite(ssrRelay, ssrRelayState);
+        RelayState = LOW;
+        digitalWrite(ssrRelay, RelayState);
         /*Particle.publish("Relais", "off", 60, PRIVATE);*/
-        pushToPublishQueue(evRelais, ssrRelayState, now);
+        pushToPublishQueue(evRelais, RelayState, now);
          return 0;
     }
     else {
@@ -514,14 +585,45 @@ int setPublishInterval(String command){
 }
 
 // Pour reseter le capteur à distance au besoin
-int deviceReset(String command) {
-    /*Serial.println("Resetting...");*/
-    System.reset();
+int remoteReset(String command) {
+    if(command == "device"){
+        System.reset();
+    } else if (command == "serialNo"){
+        NewGenTimeStamp = Time.now();
+        Serial.printlnf("Nouvelle génération de no de série", NewGenTimeStamp);
+        /*
+        Note:
+        La position de eTime et de eData sont inversé dans ce cas-ci
+        eTime est de type int et ne peux contenir le timestamp
+        */
+        /*noSerie = 0; // reset serial no to 0*/
+        pushToPublishQueue(evNewGenSN, millis(), NewGenTimeStamp);
+    }
 }
 
 // Permet de demander un of des événements manquants
-bool replayEvent(String command){
-    return true;
+int replayEvent(String command){
+    // Verifier que la dernière requête est complété avant
+    if (replayBuffLen > 0){
+        return -1;
+    }
+    int targetSN = command.toInt();
+    // check for out of range
+    if(targetSN < 0 || targetSN >= noSerie){
+        return -1;
+    }
+    // Contenir la demande à la taille du buffer au maximum
+    int deltaSN = (noSerie - targetSN);
+    if(deltaSN > buffSize){
+        deltaSN = buffSize;
+    }
+    // si tmpPtr est negatif il faut lire par l'autre bout du buffer
+    int tmpPtr = (readPtr - deltaSN);
+    if (tmpPtr < 0 ){
+        tmpPtr += buffLen;
+    }
+    replayPtr = tmpPtr;
+    replayBuffLen = deltaSN;
 }
 
 // Formattage standard pour les données sous forme JSON
