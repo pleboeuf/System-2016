@@ -203,8 +203,8 @@ bool connWasLost = false;
 /*bool MB7389Valid = false;
 String Dist_MB7389Str;
 int MB7389latestReading = 0;
-int R = 82;
-int CR = 13;*/
+const int R = 82;
+const int CR = 13;*/
 
 
 /*
@@ -229,9 +229,9 @@ class ExternalRGB {
     }
 
     void LEDhandler(uint8_t r, uint8_t g, uint8_t b) {
-        analogWrite(pin_r, 255 - r); // 255 - r pour common cathode
-        analogWrite(pin_g, 255 - g); // 255 - g pour common cathode
-        analogWrite(pin_b, 255 - b); // 255 - b pour common cathode
+      analogWrite(pin_r, 255 - r); // 255 - r pour common cathode
+      analogWrite(pin_g, 255 - g); // 255 - g pour common cathode
+      analogWrite(pin_b, 255 - b); // 255 - b pour common cathode
     }
 
     private:
@@ -324,6 +324,9 @@ void setup() {
 // Initialisation
     pinMode(led, OUTPUT);
     pinMode(ssrRelay, OUTPUT);
+    /*pinMode(heater, OUTPUT);
+    HeatingPower =  256 * MaxHeatingPowerPC / 100; // Valeur de PWM de chauffage
+    analogWrite(heater, HeatingPower); //Désactiver le chauffage*/
     digitalWrite(led, LOW);
     digitalWrite(ssrRelay, LOW);
     PumpCurrentState = digitalRead(A0);
@@ -394,16 +397,8 @@ void loop(){
 void readAllSensors() {
     digitalWrite(led, LOW); // Pour indiqué le début de la prise de mesure
     now = millis();
-// ********* Appeler ici les fonctions de mesure pour le capteur concerné. ***********
-//
-// Les fonctions doivent mettre leur résultats dans la queue de publication avec la function
-// pushToPublishQueue(). Si le cloud est dispomible les événements seront publiés plus loin
-// dans la boucle
-//
     Readtemp_US100();
     ReadDistance_US100();
-//
-// ************************************************************************************
     digitalWrite(led, HIGH); // Pour indiqué la fin de la prise de mesure
 
 // Publication de l'état de la pompe s'il y a eu changement
@@ -652,7 +647,6 @@ String makeJSON(uint16_t numSerie, uint32_t eGenTS, uint32_t eTime, int eData, S
 // Publie les événement et gère les no. de série et le stockage des événements
 bool pushToPublishQueue(int eventNamePtr, int eData, uint32_t eTime){
   struct Event thisEvent;
-  /*eSnGen = newGenTimestamp;*/
   thisEvent = {noSerie, newGenTimestamp, eTime, eventNamePtr, eData};
   Serial.println(">>>> pushToPublishQueue:::");
   writeEvent(thisEvent); // Pousse les données dans le buffer circulaire
@@ -715,13 +709,13 @@ bool replayQueuedEvents(){
 
 // Permet de demander un replay des événements manquants
 // Initialise les paramètres pour la routine replayQueuedEvents()
-bool replayEvent(String command){
+int replayEvent(String command){
     int targetSerNo = command.toInt();
     Serial.printlnf("?????? Demande de replay Event no: %d,  writePtr= %u, readPtr= %u, replayBuffLen= %u",
                     targetSerNo, writePtr, readPtr, replayBuffLen);
 
     if (replayBuffLen > 0){
-        return false; // La requête précédente n'est pas encore complête - Attendre
+        return -1; // La requête précédente n'est pas encore complête - Attendre
     }
     // Validation de la demande
     if (targetSerNo >= 0){ // Le numéro recherché doit être plus grand que 0
@@ -748,9 +742,9 @@ bool replayEvent(String command){
         }
         Serial.printlnf("?????? Accepté pour replay Event no: %d, ReplayPtr= %u, writePtr= %u, readPtr= %u, replayBuffLen= %u, No de série courant= %u",
                         targetSerNo, replayPtr, writePtr, readPtr, replayBuffLen, noSerie);
-        return true;
+        return 0;
     } else {
-        return false;
+        return -1;
     }
 }
 

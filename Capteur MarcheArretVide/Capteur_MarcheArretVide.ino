@@ -55,7 +55,7 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 #define baseLoopTime  206      //Estimated loop time in millisecond
 #define debounceDelay 50    // Debounce time for valve position readswitch
 #define fastSampling  1000UL   // in milliseconds
-#define slowSampling  5000UL   // in milliseconds
+#define slowSampling  2000UL   // in milliseconds
 #define numReadings 10           // Number of readings to average for filtering
 #define minDistChange 2.0 * numReadings      // Minimum change in distance to publish an event (1/16")
 #define minTempChange 0.5 * numReadings      // Minimum temperature change to publish an event
@@ -86,6 +86,8 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 #define evTempExterne 15
 #define evHeating 16
 #define evMB7389Distance 17
+#define evNewGenSN 18
+#define evBootTimestamp 19
 
 
 // Variables lié aux événements
@@ -107,20 +109,24 @@ String eventName[] = {
     "sonde/DS18B20/Température interne",
     "sonde/DS18B20/Température externe",
     "sortie/Chauffage boitier",
-    "sonde/MB7389/Distance"
+    "sonde/MB7389/Distance",
+    "NewGenSN",
+    "Boot timestamp"
     };
 
 // Structure définissant un événement
 typedef struct Event{
   uint16_t noSerie; // Le numéro de série est généré automatiquement
+  uint32_t eGenTS; // Timestamp du début d'une série de noSerie.
+  uint32_t eTime; // Temps depuis la mise en marche du capteur. Overflow après 49 jours.
   uint8_t namePtr; // Pointeur dans l'array des nom d'événement. (Pour sauver de l'espace NVRAM)
   int16_t eData;   // Données pour cet événement. Entier 16 bits. Pour sauvegarder des données en point flottant
                    // multiplié d'abord la donnée par un facteur (1000 par ex.) en convertir en entier.
                    // Il suffira de divisé la données au moment de la réception de l'événement.
-  unsigned long eTime; // Temps depuis la mise en marche du capteur. Overflow après 49 jours.
+
 };
 // Variable relié à l'opération du buffer circulaire
-const int buffSize = 300; // Nombre max d'événements que l'on peut sauvegarder
+const int buffSize = 250; // Nombre max d'événements que l'on peut sauvegarder
 retained unsigned int buffLen = 0;
 retained unsigned int writePtr = 0;
 retained unsigned int readPtr = 0;
@@ -139,7 +145,7 @@ int RGBled_Green = D1;
 int RGBLed_Blue = D2;
 int led = D7; // Feedback led
 int ssrRelay = D6; // Solid state relay
-int ssrRelayState = false;
+int RelayState = false;
 int motorState = A0; // input pour Pompe marche/arrêt
 int heater = D3; //Contrôle le transistor du chauffage
 
@@ -161,9 +167,9 @@ int prev_TempUS100 = 0;
 int prev_TempExterne = 99;
 int prev_TempInterne = 99;
 int allTempReadings[numReadings];
-OneWire oneWire(ONE_WIRE_BUS);
+/*OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature ds18b20Sensors(&oneWire);
-DeviceAddress enclosureThermometer, outsideThermometer;
+DeviceAddress enclosureThermometer, outsideThermometer;*/
 int ds18b20Count = 0;
 bool validTempExterne = false;
 bool validTempInterne = false;
@@ -185,6 +191,7 @@ unsigned long nextSampleTime = 0;
 int maxPublishInterval = 2;
 unsigned long maxPublishDelay = maxPublishInterval * minute;
 unsigned long lastTime = 0UL;
+time_t newGenTimestamp = Time.now();
 
 // Variables liés aux publications
 char publishString[buffSize];
@@ -196,8 +203,8 @@ bool connWasLost = false;
 /*bool MB7389Valid = false;
 String Dist_MB7389Str;
 int MB7389latestReading = 0;
-int R = 82;
-int CR = 13;*/
+const int R = 82;
+const int CR = 13;*/
 
 
 /*
@@ -222,9 +229,9 @@ class ExternalRGB {
     }
 
     void LEDhandler(uint8_t r, uint8_t g, uint8_t b) {
-        analogWrite(pin_r, 255 - r); // 255 - r pour common cathode
-        analogWrite(pin_g, 255 - g); // 255 - g pour common cathode
-        analogWrite(pin_b, 255 - b); // 255 - b pour common cathode
+      analogWrite(pin_r, 255 - r); // 255 - r pour common cathode
+      analogWrite(pin_g, 255 - g); // 255 - g pour common cathode
+      analogWrite(pin_b, 255 - b); // 255 - b pour common cathode
     }
 
     private:
@@ -348,6 +355,8 @@ void setup() {
 
     Time.zone(-4);
     Time.setFormat(TIME_FORMAT_ISO8601_FULL);
+    time_t bootTime = Time.now();
+    pushToPublishQueue(evBootTimestamp, millis(), bootTime);
 
     lastPublish = millis(); //Initialise le temps initial de publication
     changeTime = lastPublish; //Initialise le temps initial de changement de la pompe
@@ -469,7 +478,7 @@ void ReadDistance_US100(){
             Serial.printlnf("Dist.: %dmm, now= %d, lastPublish= %d, RSSI= %d", (int)(dist_mm / numReadings), now, lastPublish, WiFi.RSSI());
             if (abs(dist_mm - prev_dist_mm) > minDistChange){         // Publish event in case of a change in temperature
                     lastPublish = now;                               // reset the max publish delay counter.
-                    pushToPublishQueue(evDistance, (int)(dist_mm / numReadings), now);
+                    pushToPublishQueue(evUS100Distance, (int)(dist_mm / numReadings), now);
                     prev_dist_mm = dist_mm;
                     samplingInterval = fastSampling;   //Measurements NOT stable, increase the sampling frequency
                 }
@@ -499,12 +508,12 @@ void Readtemp_US100(){
         Temp45 = Serial1.read();     // Lire la température brut
         if((Temp45 > 1) && (Temp45 < 130))   // Vérifier si la valeur est acceptable
         {
-            Temp = AvgTempReading(Temp45 - 45); //Conversion en température réelle et filtrage
-            Serial.printlnf("Temp.:%dC now= %d, lastPublish= %d",  (int)(Temp/ numReadings), now, lastPublish); // Pour debug
-            if (abs(Temp - prev_Temp) > minTempChange){    // Vérifier s'il y a eu changement depuis la dernière publication
+            TempUS100 = AvgTempReading(Temp45 - 45); //Conversion en température réelle et filtrage
+            Serial.printlnf("Temp.:%dC now= %d, lastPublish= %d",  (int)(TempUS100/ numReadings), now, lastPublish); // Pour debug
+            if (abs(TempUS100 - prev_TempUS100) > minTempChange){    // Vérifier s'il y a eu changement depuis la dernière publication
                     lastPublish = now;                     // Remise à zéro du compteur de délais de publication
-                    pushToPublishQueue(evTemperature_US100, (int)(Temp / numReadings), now); //Publication
-                    prev_Temp = Temp;                      //
+                    pushToPublishQueue(evUS100Temperature, (int)(TempUS100 / numReadings), now); //Publication
+                    prev_TempUS100 = TempUS100;                      //
                     samplingInterval = fastSampling;   // Augmenter la vitesse d'échantillonnage puisqu'il y a eu changement
                 }
         }
@@ -595,17 +604,17 @@ void CheckValvePos(){
 // Active ou désactive le relais SSR
 int toggleRelay(String command) {
     if (command=="on" || command=="1") {
-        ssrRelayState = HIGH;
-        digitalWrite(ssrRelay, ssrRelayState);
+        RelayState = HIGH;
+        digitalWrite(ssrRelay, RelayState);
         /*Particle.publish("Relais", "on", 60, PRIVATE);*/
-        pushToPublishQueue(evRelais, ssrRelayState, now);
+        pushToPublishQueue(evRelais, RelayState, now);
         return 1;
     }
     else if (command=="off" || command=="0") {
-        ssrRelayState = LOW;
-        digitalWrite(ssrRelay, ssrRelayState);
+        RelayState = LOW;
+        digitalWrite(ssrRelay, RelayState);
         /*Particle.publish("Relais", "off", 60, PRIVATE);*/
-        pushToPublishQueue(evRelais, ssrRelayState, now);
+        pushToPublishQueue(evRelais, RelayState, now);
          return 0;
     }
     else {
@@ -632,22 +641,34 @@ int remoteReset(String command) {
         System.reset();
 // ou juste les numéros de série.
     } else if (command == "serialNo") {
-        noSerie = 0;
+        newGenTimestamp = Time.now();
+        Serial.printlnf("Nouvelle génération de no de série maintenant.", newGenTimestamp);
+        /*noSerie = 0;*/
+        pushToPublishQueue(evNewGenSN, -1, millis());
     }
 }
 
+/*
+typedef struct Event{
+  uint16_t noSerie; // Le numéro de série est généré automatiquement
+  uint32_t eSnGen; // Timestamp du début d'une série de noSerie.
+  uint32_t eTime; // Temps depuis la mise en marche du capteur. Overflow après 49 jours.
+  uint8_t namePtr; // Pointeur dans l'array des nom d'événement. (Pour sauver de l'espace NVRAM)
+  int16_t eData;   // Données pour cet événement. Entier 16 bits. Pour sauvegarder des données en point flottant
+*/
 // Formattage standard pour les données sous forme JSON
-String makeJSON(unsigned long numSerie, int eData, unsigned long eTime, String eName){
+String makeJSON(uint16_t numSerie, uint32_t eGenTS, uint32_t eTime, int eData, String eName){
     /*char* formattedEName = String::format("%c", eName.c_str());*/
-    sprintf(publishString,"{\"noSerie\": %u,\"eTime\": %lu,\"eData\":%d,\"eName\": \"%s\"}", numSerie, eTime, eData, eName.c_str());
-    Serial.println(publishString);
+    /*sprintf(publishString,"{\"noSerie\": %u,\"eTime\": %lu,\"eData\":%d,\"eName\": \"%s\"}", numSerie, eTime, eData, eName.c_str());*/
+    sprintf(publishString,"{\"noSerie\": %u,\"eGenTS\": %lu,\"eTime\": %lu,\"eData\":%d,\"eName\": \"%s\"}", numSerie, eGenTS, eTime, eData, eName.c_str());
+    Serial.printlnf ("makeJSON: %s",publishString);
     return publishString;
 }
 
 // Publie les événement et gère les no. de série et le stockage des événements
-bool pushToPublishQueue(int eventNamePtr, int eData, unsigned long eTime){
+bool pushToPublishQueue(int eventNamePtr, int eData, uint32_t eTime){
   struct Event thisEvent;
-  thisEvent = {noSerie, eventNamePtr, eData, eTime};
+  thisEvent = {noSerie, newGenTimestamp, eTime, eventNamePtr, eData};
   Serial.println(">>>> pushToPublishQueue:::");
   writeEvent(thisEvent); // Pousse les données dans le buffer circulaire
   noSerie++;
@@ -661,7 +682,7 @@ bool publishQueuedEvents(){
     bool publishSuccess = false;
     struct Event thisEvent = {};
     Serial.println("<<<< publishQueuedEvents:::");
-    thisEvent = peekEvent();
+    thisEvent = peekEvent(readPtr);
     if (sizeof(thisEvent) == 0){
         return publishSuccess; // Rien à publié
     }
@@ -671,7 +692,7 @@ bool publishQueuedEvents(){
           delay(2000); // Gives some time to avoid loosing events
         }
         publishSuccess = Particle.publish(DomainName + DeptName + eventName[thisEvent.namePtr],
-                                            makeJSON(thisEvent.noSerie, thisEvent.eData, thisEvent.eTime, DomainName + DeptName + eventName[thisEvent.namePtr]), 60, PRIVATE);
+                                            makeJSON(thisEvent.noSerie, thisEvent.eGenTS, thisEvent.eTime, thisEvent.eData, DomainName + DeptName + eventName[thisEvent.namePtr]), 60, PRIVATE);
         if (publishSuccess){
         readEvent(); // Avance le pointeur de lecture
         }
@@ -696,7 +717,8 @@ bool replayQueuedEvents(){
           delay(2000); // Gives some time to avoid loosing events
         }
         publishSuccess = Particle.publish(DomainName + "replay/" + eventName[thisEvent.namePtr],
-                                            makeJSON(thisEvent.noSerie, thisEvent.eData, thisEvent.eTime, DomainName + DeptName + eventName[thisEvent.namePtr]), 60, PRIVATE);
+                                            makeJSON(thisEvent.noSerie, thisEvent.eGenTS, thisEvent.eTime, thisEvent.eData, DomainName + DeptName + eventName[thisEvent.namePtr]), 60, PRIVATE);
+                                            //makeJSON(uint16_t numSerie, uint32_t eGenTS, uint32_t eTime, int eData, String eName){
         if (publishSuccess){
         replayReadEvent(); // Avance le pointeur de lecture
         }
@@ -708,13 +730,13 @@ bool replayQueuedEvents(){
 
 // Permet de demander un replay des événements manquants
 // Initialise les paramètres pour la routine replayQueuedEvents()
-bool replayEvent(String command){
+int replayEvent(String command){
     int targetSerNo = command.toInt();
     Serial.printlnf("?????? Demande de replay Event no: %d,  writePtr= %u, readPtr= %u, replayBuffLen= %u",
                     targetSerNo, writePtr, readPtr, replayBuffLen);
 
     if (replayBuffLen > 0){
-        return false; // La requête précédente n'est pas encore complête - Attendre
+        return -1; // La requête précédente n'est pas encore complête - Attendre
     }
     // Validation de la demande
     if (targetSerNo >= 0){ // Le numéro recherché doit être plus grand que 0
@@ -741,9 +763,9 @@ bool replayEvent(String command){
         }
         Serial.printlnf("?????? Accepté pour replay Event no: %d, ReplayPtr= %u, writePtr= %u, readPtr= %u, replayBuffLen= %u, No de série courant= %u",
                         targetSerNo, replayPtr, writePtr, readPtr, replayBuffLen, noSerie);
-        return true;
+        return 0;
     } else {
-        return false;
+        return -1;
     }
 }
 
@@ -760,33 +782,10 @@ bool writeEvent(struct Event thisEvent){
       buffLen = writePtr - readPtr;
   }
    //pour debug
-  Serial.print("-------> " + DomainName + DeptName + eventName[thisEvent.namePtr]);
+  Serial.print("W------> " + DomainName + DeptName + eventName[thisEvent.namePtr]);
   Serial.printlnf(": writeEvent:: writePtr= %u, readPtr= %u, buffLen= %u, noSerie: %u, eData: %u, eTime: %u",
                                      writePtr, readPtr, buffLen, thisEvent.noSerie, thisEvent.eData, thisEvent.eTime);
   return true;
-}
-
-// Lecture d'un événement en mémoire
-struct Event replayReadEvent(){
-  struct Event thisEvent = {};
-  if (replayPtr == writePtr){
-    Serial.printlnf("\n<--&&--- replayReadEvent:: writePtr= %u, replayPtr= %u, replayBuffLen= %u, *** replay buffer vide ***",
-                                      writePtr, replayPtr, replayBuffLen);
-    return thisEvent; // événement vide
-  }
-  thisEvent = eventBuffer[replayPtr];
-  replayPtr = (replayPtr + 1) % buffSize; // increment replay pointer
-  if ((writePtr - replayPtr) < 0){
-      replayBuffLen = writePtr - replayPtr + buffSize;
-  } else {
-      replayBuffLen = writePtr - replayPtr;
-  }
-
-  //pour debug
-  Serial.print("<------- " + DomainName + "replay/" + eventName[thisEvent.namePtr]);
-  Serial.printlnf(": readEvent:: writePtr= %u, replayPtr= %u, replayBuffLen= %u, noSerie: %u, eData: %u, eTime: %u",
-                                    writePtr, replayPtr, replayBuffLen, thisEvent.noSerie, thisEvent.eData, thisEvent.eTime);
-  return thisEvent;
 }
 
 // Lecture d'un événement en mémoire
@@ -805,7 +804,7 @@ struct Event readEvent(){
       buffLen = writePtr - readPtr;
   }
   //pour debug
-  Serial.print("<------- " + DomainName + DeptName + eventName[thisEvent.namePtr]);
+  Serial.print("<R------ " + DomainName + DeptName + eventName[thisEvent.namePtr]);
   Serial.printlnf(": readEvent:: writePtr= %u, readPtr= %u, buffLen= %u, noSerie: %u, eData: %u, eTime: %u",
                                     writePtr, readPtr, buffLen, thisEvent.noSerie, thisEvent.eData, thisEvent.eTime);
   return thisEvent;
