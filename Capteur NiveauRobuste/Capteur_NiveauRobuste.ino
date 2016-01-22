@@ -44,7 +44,7 @@ Les événements sont stocké au fur et à mesure de leur production. Il seront 
 indépendamment de leur production.
 */
 
-// SYSTEM_THREAD(ENABLED);
+//SYSTEM_THREAD(ENABLED);
 STARTUP(WiFi.selectAntenna(ANT_EXTERNAL));
 STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 
@@ -797,7 +797,7 @@ int remoteReset(String command) {
 // ou juste les numéros de série.
     } else if (command == "serialNo") {
         newGenTimestamp = Time.now();
-        Serial.printlnf("Nouvelle génération de no de série maintenant.", newGenTimestamp);
+        Serial.printlnf("Nouvelle génération de no de série maintenant= %lu", newGenTimestamp);
         /*noSerie = 0;*/
         pushToPublishQueue(evNewGenSN, -1, millis());
     }
@@ -886,43 +886,54 @@ bool replayQueuedEvents(){
 
 // Permet de demander un replay des événements manquants
 // Initialise les paramètres pour la routine replayQueuedEvents()
+// Format de la string de command: "Target SN, Target generation Id"
 int replayEvent(String command){
-    int targetSerNo = command.toInt();
-    Serial.printlnf("?????? Demande de replay Event no: %d,  writePtr= %u, readPtr= %u, replayBuffLen= %u",
-                    targetSerNo, writePtr, readPtr, replayBuffLen);
-
-    if (replayBuffLen > 0){
-        return -1; // La requête précédente n'est pas encore complête - Attendre
+  uint32_t targetGen;
+  uint16_t targetSerNo;
+  int sep = command.indexOf(",");
+  if (sep > 0){
+    targetGen = command.substring(sep + 1).toInt();
+    targetSerNo = command.substring(0, sep).toInt();
+  } else {
+    return -1; //Fail
+  }
+  Serial.printlnf("?????? Demande de replay Event SN: %u, génération: %u,  writePtr= %u, readPtr= %u, replayBuffLen= %u",
+                  targetSerNo, targetGen, writePtr, readPtr, replayBuffLen);
+  if (replayBuffLen > 0){
+      return -2; // Replay en cour - Attendre
+  }
+  // Validation de la demande
+  if (targetSerNo >= 0 && targetSerNo > 0){ // Le numéro recherché doit être plus grand que 0
+    // Validation
+    if (targetGen != newGenTimestamp){
+      return -99; // "invalid generation id"
     }
-    // Validation de la demande
-    if (targetSerNo >= 0){ // Le numéro recherché doit être plus grand que 0
-        // Validation
-        if (targetSerNo >= noSerie){ // et plus petit que le numéro de série courant
-            return false;
-        }
-        if ((noSerie - targetSerNo) > buffSize){ // Il y a 300 événement au maximum dans le buffer
-            /*targetSerNo = noSerie - buffSize;*/
-            return false;
-        }
-        // Calcul de la position de l'événement dans le buffer
-        int tmpPtr = readPtr - (noSerie - targetSerNo);  // Position dans le buffer du premier événement à faire un playback
-        if (tmpPtr < 0){
-            replayPtr =  tmpPtr + buffSize;
-        } else {
-            replayPtr =  tmpPtr;
-        }
-        // calcul de la longueur du replayBuffLen
-        if ((readPtr - replayPtr) < 0){
-            replayBuffLen = readPtr - replayPtr + buffSize;
-        } else {
-            replayBuffLen = readPtr - replayPtr;
-        }
-        Serial.printlnf("?????? Accepté pour replay Event no: %d, ReplayPtr= %u, writePtr= %u, readPtr= %u, replayBuffLen= %u, No de série courant= %u",
-                        targetSerNo, replayPtr, writePtr, readPtr, replayBuffLen, noSerie);
-        return 0;
-    } else {
+    if (targetSerNo >= noSerie){ // et plus petit que le numéro de série courant
         return -1;
     }
+    if ((noSerie - targetSerNo) > buffSize){ // Il y a 250 événement au maximum dans le buffer
+        /*targetSerNo = noSerie - buffSize;*/
+        return -1;
+    }
+    // Calcul de la position de l'événement dans le buffer
+    int tmpPtr = readPtr - (noSerie - targetSerNo);  // Position dans le buffer du premier événement à faire un playback
+    if (tmpPtr < 0){
+        replayPtr =  tmpPtr + buffSize;
+    } else {
+        replayPtr =  tmpPtr;
+    }
+    // calcul de la longueur du replayBuffLen
+    if ((readPtr - replayPtr) < 0){
+        replayBuffLen = readPtr - replayPtr + buffSize;
+    } else {
+        replayBuffLen = readPtr - replayPtr;
+    }
+    Serial.printlnf("?????? Accepté pour replay Event no: %d, ReplayPtr= %u, writePtr= %u, readPtr= %u, replayBuffLen= %u, No de série courant= %u",
+                    targetSerNo, replayPtr, writePtr, readPtr, replayBuffLen, noSerie);
+    return 0; //success
+  } else {
+    return -1;
+  }
 }
 
 // Sauvegarde d'un événement en mémoire
@@ -981,8 +992,6 @@ struct Event replayReadEvent(){
   } else {
       replayBuffLen = writePtr - replayPtr;
   }
-
-
   //pour debug
   Serial.print("<------- " + DomainName + "replay/" + eventName[thisEvent.namePtr]);
   Serial.printlnf(": readEvent:: writePtr= %u, replayPtr= %u, replayBuffLen= %u, noSerie: %u, eData: %u, eTime: %u",
