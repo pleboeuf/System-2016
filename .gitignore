@@ -1,2 +1,3 @@
 /Firmware/*.bin
 *.sqlite3
+*.bin
