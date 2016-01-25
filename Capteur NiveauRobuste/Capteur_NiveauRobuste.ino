@@ -63,55 +63,53 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 #define maxRangeMB7389 4999 // Distance maximale valide pour le captgeur
 #define ONE_WIRE_BUS D4 //senseur sur D4
 #define DallasSensorResolution 9 // Résolution de lecture de température
-#define MaxHeatingPowerPC 50 // Puissance maximale appliqué sur la résistance de chauffage
+#define MaxHeatingPowerPercent 50 // Puissance maximale appliqué sur la résistance de chauffage
 #define HeatingSetPoint 30 // Température cible à l'intérieur du boitier
 
 
 // Nom des indices du tableau eventName
 #define evPompe_T1 0
 #define evPompe_T2 1
-#define evUS100Distance 2
+#define evDistance 2
 #define evUS100Temperature 3
 #define evOutOfRange 4
-#define evValve1_OpenSensorState 5      //Active low
-#define evValve1_CloseSensorState 6     //Active low
-#define evValve2_OpenSensorState 7      //Active low
-#define evValve2_CloseSensorState 8     //Active low
+#define evValve1_OpenSensorState 5
+#define evValve1_CloseSensorState 6
+#define evValve2_OpenSensorState 7
+#define evValve2_CloseSensorState 8
 #define evRelais 9
 #define evVacuum 10
-#define evDebit 11
-#define evVolume 12
-#define evPressionAtmos 13
-#define evTempInterne 14
-#define evTempExterne 15
-#define evHeating 16
-#define evMB7389Distance 17
-#define evNewGenSN 18
-#define evBootTimestamp 19
+#define evFlowmeterFlow 11
+#define evFlowmeterVolume 12
+#define evAtmosPressure 13
+#define evEnclosureTemp 14
+#define evAmbienTemp 15
+#define evHeatingPowerLevel 16
+#define evNewGenSN 17
+#define evBootTimestamp 18
 
 
-// Variables lié aux événements
+// Table des nom d'événements
 String eventName[] = {
-    "sonde/Pompe/T1",
-    "sonde/Pompe/T2",
-    "sonde/US100/Distance",
-    "sonde/US100/Temperature",
-    "sonde/Hors portée: ",
-    "sonde/Valve1/OpenSensor",
-    "sonde/Valve1/CloseSensor",
-    "sonde/Valve2/OpenSensor",
-    "sonde/Valve2/CloseSensor",
-    "sortie/Relais",
-    "sonde/Vacuum",
-    "sonde/flowmeter/Débit",
-    "calcul/Volume",
-    "sonde/Pression Atmosphérique",
-    "sonde/DS18B20/Température interne",
-    "sonde/DS18B20/Température externe",
-    "sortie/Chauffage boitier",
-    "sonde/MB7389/Distance",
-    "NewGenSN",
-    "device/boot"
+    "pump/T1",  // Pump state. Pump start
+    "pump/T2", // Pump state. Pump stop
+    "sensor/level", // Tank level. Post processing required for display
+    "sensor/sensorTemp", // Temperature read on the US100 senson
+    "sensor/outOfRange ", // Level sensor is out of max range
+    "sensor/openSensorV1", // Valve 1 open position sensor state. Active LOW
+    "sensor/closeSensorV1", // Valve 1 close position sensor state. Active LOW
+    "sensor/openSensorV2", // Valve 2 open position sensor state. Active LOW
+    "sensor/closeSensorV2", // Valve 2 close position sensor state. Active LOW
+    "output/ssrRelayState", // Output ssrRelay pin state. Active LOW
+    "sensor/vacuum", // Vacuum rsensor eading
+    "sensor/flowmeterValue", // Flowmeter reading. Not used
+    "computed/flowmeterVolume", // Volume computed from flowmert readings. Not used
+    "sensor/atmPressure", // Atmospheric pressure
+    "sensor/enclosureTemp", // Temperature inside device enclosure.
+    "sensor/ambienTemp", // Ambient temperature read by remote probe.
+    "output/enclosureHeating", // Value of PWM output to heating resistor.
+    "device/NewGenSN", // New generation of serial numbers for this device
+    "device/boot" // Device boot or reboot timestamp
     };
 
 // Structure définissant un événement
@@ -137,8 +135,8 @@ retained unsigned int savedEventCount = 0;
 
 // Name space utilisé pour les événements
 // DomainName/DeptName/FunctionName/SubFunctionName/ValueName
-String DomainName = "brunelle/";
-String DeptName = "prod/";
+String DomainName = "";
+String DeptName = "";
 
 // Pin pour l' I/O
 int RGBled_Red = D0;
@@ -300,7 +298,7 @@ void setup() {
     Particle.variable("DS18B20Cnt", ds18b20Count);
 
     Particle.function("relay", toggleRelay);
-    Particle.function("pubInterval", setPublishInterval);
+    Particle.function("set", remoteSet);
     Particle.function("reset", remoteReset);
     Particle.function("replay", replayEvent);
 
@@ -342,7 +340,7 @@ void setup() {
     pinMode(led, OUTPUT);
     pinMode(ssrRelay, OUTPUT);
     pinMode(heater, OUTPUT);
-    HeatingPower =  256 * MaxHeatingPowerPC / 100; // Valeur de PWM de chauffage
+    HeatingPower =  256 * MaxHeatingPowerPercent / 100; // Valeur de PWM de chauffage
     analogWrite(heater, HeatingPower); //Désactiver le chauffage
     digitalWrite(led, LOW);
     digitalWrite(ssrRelay, LOW);
@@ -450,8 +448,8 @@ void initDS18B20Sensors(){
             outsideTempC = ds18b20Sensors.getTempC(outsideThermometer);
             Serial.printlnf("Test device 1 outsideThermometer = %f", outsideTempC);
 
-            pushToPublishQueue(evTempInterne, (int) insideTempC, now);
-            pushToPublishQueue(evTempExterne, (int) outsideTempC, now);
+            pushToPublishQueue(evEnclosureTemp, (int) insideTempC, now);
+            pushToPublishQueue(evAmbienTemp, (int) outsideTempC, now);
         }
         Serial.println();
         delay(2000UL);
@@ -482,12 +480,12 @@ void readAllSensors() {
     if (now - lastPublish > maxPublishDelay){
             lastPublish = now;
 
-            pushToPublishQueue(evMB7389Distance, (int)(dist_mm / numReadings), now);
+            pushToPublishQueue(evDistance, (int)(dist_mm / numReadings), now);
             if (ds18b20Count == 1){
-                pushToPublishQueue(evTempInterne, (int)prev_TempInterne, now);
+                pushToPublishQueue(evEnclosureTemp, (int)prev_TempInterne, now);
             } else if (ds18b20Count == 2){
-                pushToPublishQueue(evTempInterne, (int)prev_TempInterne, now);
-                pushToPublishQueue(evTempExterne, (int)prev_TempExterne, now);
+                pushToPublishQueue(evEnclosureTemp, (int)prev_TempInterne, now);
+                pushToPublishQueue(evAmbienTemp, (int)prev_TempExterne, now);
             }
             samplingInterval = slowSampling;   // Les mesure sont stable, réduire la fréquence de mesure.
         }
@@ -525,7 +523,7 @@ void ReadDistance_US100(){
             Serial.printlnf("Dist.: %dmm, now= %d, lastPublish= %d, RSSI= %d", (int)(dist_mm / numReadings), now, lastPublish, WiFi.RSSI());
             if (abs(dist_mm - prev_dist_mm) > minDistChange){         // Publish event in case of a change in temperature
                     lastPublish = now;                               // reset the max publish delay counter.
-                    pushToPublishQueue(evMB7389Distance, (int)(dist_mm / numReadings), now);
+                    pushToPublishQueue(evDistance, (int)(dist_mm / numReadings), now);
                     prev_dist_mm = dist_mm;
                     samplingInterval = fastSampling;   //Measurements NOT stable, increase the sampling frequency
                 }
@@ -551,7 +549,7 @@ void ReadDistance_MB7389(){
         Serial.printlnf("Dist.: %dmm, now= %d, lastPublish= %d, RSSI= %d", (int)(dist_mm / numReadings), now, lastPublish, WiFi.RSSI());
         if (abs(dist_mm - prev_dist_mm) > minDistChange){         // Publish event in case of a change in temperature
                 lastPublish = now;                               // reset the max publish delay counter.
-                pushToPublishQueue(evMB7389Distance, (int)(dist_mm / numReadings), now);
+                pushToPublishQueue(evDistance, (int)(dist_mm / numReadings), now);
                 prev_dist_mm = dist_mm;
                 samplingInterval = fastSampling;   //Measurements NOT stable, increase the sampling frequency
             }
@@ -636,7 +634,7 @@ double readDS18b20temp(){
                 // Si la mesure est valide
                 if (abs(insideTempC - prev_TempInterne) >= 1){
                     // Publier s'il y a eu du changement
-                    pushToPublishQueue(evTempInterne, (int) insideTempC, now);
+                    pushToPublishQueue(evEnclosureTemp, (int) insideTempC, now);
                     prev_TempInterne = insideTempC;
                 }
                 Serial.printlnf("DS18b20 interne: %f, try= %d", insideTempC, i + 1);
@@ -656,7 +654,7 @@ double readDS18b20temp(){
                 // Si la mesure est valide
                 if (abs(outsideTempC - prev_TempExterne) >= 1){
                     // Publier s'il y a eu du changement
-                    pushToPublishQueue(evTempExterne, (int) outsideTempC, now);
+                    pushToPublishQueue(evAmbienTemp, (int) outsideTempC, now);
                     prev_TempExterne = outsideTempC;
                 }
                 Serial.printlnf("DS18b20 externe: %f, try= %d", outsideTempC, i + 1);
@@ -684,7 +682,7 @@ double readDS18b20temp(){
             }
             if (isValidDs18b20Reading(insideTempC)){
                 if (abs(insideTempC - prev_TempInterne) >= 1){
-                    pushToPublishQueue(evTempInterne, (int) insideTempC, now);
+                    pushToPublishQueue(evEnclosureTemp, (int) insideTempC, now);
                     prev_TempInterne = insideTempC;
                 }
                 Serial.printlnf("DS18b20 interne: %f", insideTempC);
@@ -717,19 +715,19 @@ int simpleThermostat(double setPoint){
         // executer la fonction de thermostat si la température interne est valide
         if (validTempInterne == true){
             if (prev_TempInterne < (setPoint - 0.5)){
-                HeatingPower =  256 * MaxHeatingPowerPC /100;
+                HeatingPower =  256 * MaxHeatingPowerPercent /100;
             } else if (prev_TempInterne > (setPoint + 0.5)){
                 HeatingPower =  0;
             }
         } else if(validTempInterne == false){
         // Si non mettre le chauffage à 1/4 de puissance pour éviter le gel.
-            HeatingPower =  0.5 * (256 * MaxHeatingPowerPC /100); // Chauffage fixe au 1/4 de la puissance
+            HeatingPower =  0.5 * (256 * MaxHeatingPowerPercent /100); // Chauffage fixe au 1/4 de la puissance
         }
 
         analogWrite(heater, HeatingPower);
         Serial.printlnf("HeatingPower= %d", HeatingPower);
         if (HeatingPower != prev_HeatingPower){
-            pushToPublishQueue(evHeating, HeatingPower, now);
+            pushToPublishQueue(evHeatingPowerLevel, HeatingPower, now);
             prev_HeatingPower = HeatingPower;
         }
     }
@@ -782,16 +780,42 @@ int toggleRelay(String command) {
     }
 }
 
+/*String parseCommand(String command){
+  String token;
+  String data;
+  int sep = command.indexOf(",");
+  if (sep > 0){
+    token = command.substring(sep + 1).toInt();
+    data = command.substring(0, sep).toInt();
+    return ([[token],[data]]);
+  } else {
+    return (data); //Fail
+  }
+}*/
+
 // Pour modifier l'interval de publication par défault
-int setPublishInterval(String command){
+int remoteSet(String command){
+  String token, data;
+  int sep = command.indexOf(",");
+  if (sep > 0){
+    token = command.substring(sep + 1).toInt();
+    data = command.substring(0, sep).toInt();
+  } else {
+    return -1; //Fail
+  }
+
+  if (token == "MaxPublishDelay"){
     unsigned long newInterval;
-    newInterval = command.toInt();
+    newInterval = data.toInt();
     if (newInterval > 0){
-        maxPublishInterval = command.toInt();
+        maxPublishInterval = data.toInt();
         return 1;
     } else {
         return -1;
     }
+  } else if (token == "MaxHeatingPower"){
+
+  }
 }
 
 // Pour resetter le capteur à distance au besoin
@@ -818,10 +842,11 @@ typedef struct Event{
   int16_t eData;   // Données pour cet événement. Entier 16 bits. Pour sauvegarder des données en point flottant
 */
 // Formattage standard pour les données sous forme JSON
-String makeJSON(uint16_t numSerie, uint32_t timeStamp, uint32_t timer, int eData, String eName){
+String makeJSON(uint16_t numSerie, uint32_t timeStamp, uint32_t timer, int eData, String eName, bool replayFlag){
     /*char* formattedEName = String::format("%c", eName.c_str());*/
     /*sprintf(publishString,"{\"noSerie\": %u,\"timer\": %lu,\"eData\":%d,\"eName\": \"%s\"}", numSerie, timer, eData, eName.c_str());*/
-    sprintf(publishString,"{\"noSerie\": %u,\"generation\": %lu,\"timestamp\": %lu,\"timer\": %lu,\"eData\":%d,\"eName\": \"%s\"}", numSerie, newGenTimestamp, timeStamp, timer, eData, eName.c_str());
+    sprintf(publishString,"{\"noSerie\": %u,\"generation\": %lu,\"timestamp\": %lu,\"timer\": %lu,\"eData\":%d,\"eName\": \"%s\",\"replay\":%d}",
+                              numSerie, newGenTimestamp, timeStamp, timer, eData, eName.c_str(), replayFlag);
     Serial.printlnf ("makeJSON: %s",publishString);
     return publishString;
 }
@@ -842,6 +867,7 @@ bool pushToPublishQueue(int eventNamePtr, int eData, uint32_t timer){
 bool publishQueuedEvents(){
     bool publishSuccess = false;
     struct Event thisEvent = {};
+    bool replayFlag = false; // not a replay
     Serial.println("<<<< publishQueuedEvents:::");
     thisEvent = peekEvent(readPtr);
     if (sizeof(thisEvent) == 0){
@@ -853,7 +879,7 @@ bool publishQueuedEvents(){
           delay(2000); // Gives some time to avoid loosing events
         }
         publishSuccess = Particle.publish(DomainName + DeptName + eventName[thisEvent.namePtr],
-                                            makeJSON(thisEvent.noSerie, thisEvent.timeStamp, thisEvent.timer, thisEvent.eData, DomainName + DeptName + eventName[thisEvent.namePtr]), 60, PRIVATE);
+                                            makeJSON(thisEvent.noSerie, thisEvent.timeStamp, thisEvent.timer, thisEvent.eData, DomainName + DeptName + eventName[thisEvent.namePtr], replayFlag), 60, PRIVATE);
         if (publishSuccess){
         readEvent(); // Avance le pointeur de lecture
         }
@@ -867,6 +893,7 @@ bool publishQueuedEvents(){
 bool replayQueuedEvents(){
     bool publishSuccess = false;
     struct Event thisEvent = {};
+    bool replayFlag = true; // This is a replay
     Serial.println("&&&& replayQueuedEvents:::");
     thisEvent = peekEvent(replayPtr);
     if (sizeof(thisEvent) == 0){
@@ -877,8 +904,8 @@ bool replayQueuedEvents(){
           connWasLost =  false;
           delay(2000); // Gives some time to avoid loosing events
         }
-        publishSuccess = Particle.publish(DomainName + "replay/" + eventName[thisEvent.namePtr],
-                                            makeJSON(thisEvent.noSerie, thisEvent.timeStamp, thisEvent.timer, thisEvent.eData, DomainName + DeptName + eventName[thisEvent.namePtr]), 60, PRIVATE);
+        publishSuccess = Particle.publish(DomainName + DeptName + eventName[thisEvent.namePtr],
+                                            makeJSON(thisEvent.noSerie, thisEvent.timeStamp, thisEvent.timer, thisEvent.eData, DomainName + DeptName + eventName[thisEvent.namePtr], replayFlag), 60, PRIVATE);
                                             //makeJSON(uint16_t numSerie, uint32_t timeStamp, uint32_t timer, int eData, String eName){
         if (publishSuccess){
         replayReadEvent(); // Avance le pointeur de lecture
@@ -893,12 +920,12 @@ bool replayQueuedEvents(){
 // Initialise les paramètres pour la routine replayQueuedEvents()
 // Format de la string de command: "Target SN, Target generation Id"
 int replayEvent(String command){
-  uint32_t targetGen;
+  time_t targetGen;
   uint16_t targetSerNo;
   int sep = command.indexOf(",");
   if (sep > 0){
-    targetGen = command.substring(sep + 1).toInt();
     targetSerNo = command.substring(0, sep).toInt();
+    targetGen = command.substring(sep + 1).toInt();
   } else {
     return -1; //Fail
   }
@@ -908,9 +935,10 @@ int replayEvent(String command){
       return -2; // Replay en cour - Attendre
   }
   // Validation de la demande
-  if (targetSerNo >= 0 && targetSerNo > 0){ // Le numéro recherché doit être plus grand que 0
+  if (targetSerNo >= 0 && targetGen > 0){ // Le numéro recherché doit être plus grand que 0
     // Validation
     if (targetGen != newGenTimestamp){
+      Serial.printlnf("??????? Error -99: targetGen= %lu, targetSerNo= %u", targetGen, targetSerNo);
       return -99; // "invalid generation id"
     }
     if (targetSerNo >= noSerie){ // et plus petit que le numéro de série courant
@@ -1003,7 +1031,7 @@ struct Event replayReadEvent(){
   }
 
   //pour debug
-  Serial.print("<------- " + DomainName + "replay/" + eventName[thisEvent.namePtr]);
+  Serial.print("<------- " + DomainName + DeptName + eventName[thisEvent.namePtr]);
   Serial.printlnf(": readEvent:: writePtr= %u, replayPtr= %u, replayBuffLen= %u, noSerie: %u, eData: %u, timer: %u",
                                     writePtr, replayPtr, replayBuffLen, thisEvent.noSerie, thisEvent.eData, thisEvent.timer);
   return thisEvent;
