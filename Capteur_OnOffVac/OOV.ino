@@ -299,6 +299,7 @@ void setup() {
             Serial.printlnf("Setting credential for: %s", ap.ssid);
             WiFi.setCredentials("PL-Net", "calvin et hobbes");
         }
+    Wifi.connect();
     }
 
 // Enregistrement des fonctions et variables disponible par le nuage
