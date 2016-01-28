@@ -83,7 +83,7 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 #define evFlowmeterVolume 12
 #define evAtmosPressure 13
 #define evEnclosureTemp 14
-#define evAmbienTemp 15
+#define evAmbientTemp 15
 #define evHeatingPowerLevel 16
 #define evNewGenSN 17
 #define evBootTimestamp 18
@@ -106,7 +106,7 @@ String eventName[] = {
     "computed/flowmeterVolume", // Volume computed from flowmert readings. Not used
     "sensor/atmPressure", // Atmospheric pressure
     "sensor/enclosureTemp", // Temperature inside device enclosure.
-    "sensor/ambienTemp", // Ambient temperature read by remote probe.
+    "sensor/ambientTemp", // Ambient temperature read by remote probe.
     "output/enclosureHeating", // Value of PWM output to heating resistor.
     "device/NewGenSN", // New generation of serial numbers for this device
     "device/boot" // Device boot or reboot timestamp
@@ -124,13 +124,13 @@ typedef struct Event{
 };
 
 // Variable relié à l'opération du buffer circulaire
-const int buffSize = 250; // Nombre max d'événements que l'on peut sauvegarder
+const int buffSize = 190; // Nombre max d'événements que l'on peut sauvegarder
+retained struct Event eventBuffer[buffSize];
 retained unsigned int buffLen = 0;
 retained unsigned int writePtr = 0;
 retained unsigned int readPtr = 0;
 retained unsigned int replayPtr = 0;
 unsigned int replayBuffLen = 0;
-retained struct Event eventBuffer[buffSize];
 retained unsigned int savedEventCount = 0;
 
 // Name space utilisé pour les événements
@@ -299,7 +299,7 @@ void setup() {
             Serial.printlnf("Setting credential for: %s", ap.ssid);
             WiFi.setCredentials("PL-Net", "calvin et hobbes");
         }
-    Wifi.connect();
+    WiFi.connect();
     }
 
 // Enregistrement des fonctions et variables disponible par le nuage
@@ -649,7 +649,7 @@ int remoteSet(String command){
         return -1;
     }
   } else if (token == "MaxHeatingPower"){
-
+    return -1;
   }
 }
 
