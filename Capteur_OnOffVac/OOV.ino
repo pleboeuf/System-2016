@@ -44,7 +44,7 @@ Les événements sont stocké au fur et à mesure de leur production. Il seront 
 indépendamment de leur production.
 */
 
-/*SYSTEM_THREAD(ENABLED);*/
+SYSTEM_THREAD(ENABLED);
 STARTUP(WiFi.selectAntenna(ANT_EXTERNAL));
 STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 
@@ -83,7 +83,7 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 #define evFlowmeterVolume 12
 #define evAtmosPressure 13
 #define evEnclosureTemp 14
-#define evAmbientTemp 15
+#define evambientTemp 15
 #define evHeatingPowerLevel 16
 #define evNewGenSN 17
 #define evBootTimestamp 18
@@ -91,26 +91,26 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 
 // Table des nom d'événements
 String eventName[] = {
-    "pump/T1",  // Pump state. Pump start
-    "pump/T2", // Pump state. Pump stop
-    "sensor/level", // Tank level. Post processing required for display
-    "sensor/sensorTemp", // Temperature read on the US100 senson
-    "sensor/outOfRange ", // Level sensor is out of max range
-    "sensor/openSensorV1", // Valve 1 open position sensor state. Active LOW
-    "sensor/closeSensorV1", // Valve 1 close position sensor state. Active LOW
-    "sensor/openSensorV2", // Valve 2 open position sensor state. Active LOW
-    "sensor/closeSensorV2", // Valve 2 close position sensor state. Active LOW
-    "output/ssrRelayState", // Output ssrRelay pin state. Active LOW
-    "sensor/vacuum", // Vacuum rsensor eading
-    "sensor/flowmeterValue", // Flowmeter reading. Not used
-    "computed/flowmeterVolume", // Volume computed from flowmert readings. Not used
-    "sensor/atmPressure", // Atmospheric pressure
-    "sensor/enclosureTemp", // Temperature inside device enclosure.
-    "sensor/ambientTemp", // Ambient temperature read by remote probe.
-    "output/enclosureHeating", // Value of PWM output to heating resistor.
-    "device/NewGenSN", // New generation of serial numbers for this device
-    "device/boot" // Device boot or reboot timestamp
-    };
+  "pump/T1",  // Pump state. Pump start
+  "pump/T2", // Pump state. Pump stop
+  "sensor/level", // Tank level. Post processing required for display
+  "sensor/sensorTemp", // Temperature read on the US100 senson
+  "sensor/outOfRange ", // Level sensor is out of max range
+  "sensor/openSensorV1", // Valve 1 open position sensor state. Active LOW
+  "sensor/closeSensorV1", // Valve 1 close position sensor state. Active LOW
+  "sensor/openSensorV2", // Valve 2 open position sensor state. Active LOW
+  "sensor/closeSensorV2", // Valve 2 close position sensor state. Active LOW
+  "output/ssrRelayState", // Output ssrRelay pin state. Active LOW
+  "sensor/vacuum", // Vacuum rsensor eading
+  "sensor/flowmeterValue", // Flowmeter reading. Not used
+  "computed/flowmeterVolume", // Volume computed from flowmert readings. Not used
+  "sensor/atmPressure", // Atmospheric pressure
+  "sensor/enclosureTemp", // Temperature inside device enclosure.
+  "sensor/ambientTemp", // Ambient temperature read by remote probe.
+  "output/enclosureHeating", // Value of PWM output to heating resistor.
+  "device/NewGenSN", // New generation of serial numbers for this device
+  "device/boot" // Device boot or reboot timestamp
+  };
 
 // Structure définissant un événement
 typedef struct Event{
@@ -289,16 +289,18 @@ void setup() {
     WiFiAccessPoint aps[20];
     int found = WiFi.scan(aps, 20);
     for (int i=0; i<found; i++) {
-        WiFiAccessPoint& ap = aps[i];
-        Serial.printlnf("SSID: %s, Security: %d, Channel: %d, RSSI: %d", ap.ssid, ap.security, ap.channel, ap.rssi);
-        if (ap.ssid == "BoilerHouse"){
-            WiFi.setCredentials("BoilerHouse", "Station Shefford");
-        } else if (ap.ssid == "PumpHouse"){
-            WiFi.setCredentials("PumpHouse", "Station Laporte");
-        } else if (ap.ssid == "PL-Net"){
-            Serial.printlnf("Setting credential for: %s", ap.ssid);
-            WiFi.setCredentials("PL-Net", "calvin et hobbes");
-        }
+      WiFiAccessPoint& ap = aps[i];
+      Serial.printlnf("SSID: %s, Security: %d, Channel: %d, RSSI: %d", ap.ssid, ap.security, ap.channel, ap.rssi);
+      if (ap.ssid == "BoilerHouse"){
+        WiFi.setCredentials("BoilerHouse", "Station Shefford");
+      } else if (ap.ssid == "PumpHouse"){
+        WiFi.setCredentials("PumpHouse", "Station Laporte");
+      } else if (ap.ssid == "PL-Net"){
+        WiFi.setCredentials("PL-Net", "calvin et hobbes");
+      } else if (ap.security == 0){
+        WiFi.setCredentials(ap.ssid);
+      }
+    Serial.printlnf("Connexion à: %s", ap.ssid);
     WiFi.connect();
     }
 
