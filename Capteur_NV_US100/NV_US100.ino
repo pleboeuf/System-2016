@@ -8,12 +8,14 @@ STARTUP(WiFi.selectAntenna(ANT_EXTERNAL));
 
 
 // Paramètres pour la compilation conditionnelle
+#define NONE 0
 #define US100 1
 #define MB7389 2
 #define DISTANCESENSOR US100    //Pour compilation conditionnelle du serial handler: US100. MB7389, None
 #define PUMPMOTORDETECT false   //Pour compilation conditionnelle de la routin e d'interruption
 #define HASDS18B20SENSOR false  //Pour le code spécifique au captgeur de température DS18B20
 #define HASHEATING false        //Pour le chauffage du boitier
+#define HASVACUUMSENSOR false   //Un capteur de vide est installé
 //
 
 // General definitions
@@ -26,6 +28,7 @@ STARTUP(WiFi.selectAntenna(ANT_EXTERNAL));
 #define numReadings 10           // Number of readings to average for filtering
 #define minDistChange 2.0 * numReadings      // Minimum change in distance to publish an event (1/16")
 #define minTempChange 0.5 * numReadings      // Minimum temperature change to publish an event
+#define minVacuumChange 1.0 // Changement de 1.0 Po Hg avant publication du niveau de vide
 #define maxRangeUS100 2500 // Distance maximale valide pour le captgeur
 #define maxRangeMB7389 4999 // Distance maximale valide pour le captgeur
 #define ONE_WIRE_BUS D4 //senseur sur D4
@@ -79,7 +82,7 @@ String eventName[] = {
   };
 
 // Structure définissant un événement
-typedef struct Event{
+struct Event{
   uint16_t noSerie; // Le numéro de série est généré automatiquement
   uint32_t timeStamp; // Timestamp du début d'une génération de noSerie.
   uint32_t timer; // Temps depuis la mise en marche du capteur. Overflow après 49 jours.
@@ -111,8 +114,14 @@ int RGBLed_Blue = D2;
 int led = D7; // Feedback led
 int ssrRelay = D6; // Solid state relay
 int RelayState = false;
-int motorState = A0; // input pour Pompe marche/arrêt
+int motorState = A1; // input pour Pompe marche/arrêt
 int heater = D3; //Contrôle le transistor du chauffage
+#if HASVACUUMSENSOR
+  int VacuumSensor = A0; //Analogue input pour la mesure du vide
+  float VacCalibration;  // Variable contenant la valeur de calibration du capteur.
+  double VacAnalogvalue;      // Mesure du vide
+  double prev_VacAnalogvalue; // Mesure précédente du vide
+#endif
 
 // Variables liés à la pompe
 bool PumpOldState = true;
@@ -217,7 +226,7 @@ ExternalRGB myRGB(RGBled_Red, RGBled_Green, RGBLed_Blue);
 
 #if PUMPMOTORDETECT
 /*
-  Attach interrupt handler to pin A0 to monitor pump Start/Stop
+  Attach interrupt handler to pin A1 to monitor pump Start/Stop
 */
   class PumpState_A1 {
     public:
@@ -271,6 +280,24 @@ void setup() {
                                 // RX = LOW pour arrêter le capteur, RX = HIGH pour le démarrer
     #endif
     delay(300UL); // Pour partir le moniteur série pour débug
+// Scanning Wifi access point
+    WiFiAccessPoint aps[20];
+    int found = WiFi.scan(aps, 20);
+    for (int i=0; i<found; i++) {
+      WiFiAccessPoint& ap = aps[i];
+      Serial.printlnf("SSID: %s, Security: %d, Channel: %d, RSSI: %d", ap.ssid, ap.security, ap.channel, ap.rssi);
+      if (ap.ssid == "BoilerHouse"){
+        WiFi.setCredentials("BoilerHouse", "Station Shefford");
+      } else if (ap.ssid == "PumpHouse"){
+        WiFi.setCredentials("PumpHouse", "Station Laporte");
+      } else if (ap.ssid == "PL-Net"){
+        WiFi.setCredentials("PL-Net", "calvin et hobbes");
+      } else if (ap.security == 0){
+        WiFi.setCredentials(ap.ssid);
+      }
+    Serial.printlnf("Connexion à: %s", ap.ssid);
+    WiFi.connect();
+    }
 
 // Enregistrement des fonctions et variables disponible par le nuage
     Serial.println("Enregistrement des variables et fonctions\n");
@@ -323,7 +350,7 @@ void setup() {
     digitalWrite(led, LOW);
     digitalWrite(ssrRelay, LOW);
 
-    PumpCurrentState = digitalRead(A0);
+    PumpCurrentState = digitalRead(A1);
     for (int i=0; i <= 3; i++) {
         pinMode(ValvePos_pin[i], INPUT_PULLUP);
     }
@@ -333,6 +360,10 @@ void setup() {
         allTempReadings[i] = 0;
     }
 
+    #if HASVACUUMSENSOR
+        VacCalibration = VacCalibre();
+    #endif
+
     Time.zone(-4);
     Time.setFormat(TIME_FORMAT_ISO8601_FULL);
     Particle.syncTime();
@@ -341,7 +372,6 @@ void setup() {
     lastPublish = millis(); //Initialise le temps initial de publication
     changeTime = lastPublish; //Initialise le temps initial de changement de la pompe
 }
-
 
 /*
     Le capteur de distance MB7389 fonctionne en continu.
@@ -407,6 +437,10 @@ void readAllSensors() {
 
   #if DISTANCESENSOR == MB7389
       ReadDistance_MB7389();
+  #endif
+
+  #if HASVACUUMSENSOR
+      VacReadVacuumSensor();
   #endif
 
   digitalWrite(led, HIGH); // Pour indiqué la fin de la prise de mesure
@@ -754,6 +788,48 @@ int simpleThermostat(double setPoint){
 }
 #endif
 
+/*
+Section réservé pour le code de mesure du vide (vacuum)
+*/
+#if HASVACUUMSENSOR
+  void VacReadVacuumSensor(){
+    int val = analogRead(VacuumSensor);
+    double VacAnalogvalue = VacRaw2kPa(val, VacCalibration);
+    if (abs(VacAnalogvalue - prev_VacAnalogvalue) > minVacuumChange){  // Publish event in case of a change in vacuum
+        lastPublish = now;                                             // reset the max publish delay counter.
+        pushToPublishQueue(evVacuum, (int)(VacAnalogvalue * 10), now); // The measurements value is converted to integers for storage in the event buffer
+        prev_VacAnalogvalue = VacAnalogvalue;                          // The value will be divided by 10 for display to recover the decimal
+    }
+  }
+
+  //Routine de calibration du capteur de vide
+  double VacCalibre() {
+    double calibrer = 3850.24 - (double) analogRead(VacuumSensor);
+
+    // 3850.24 correspond à la valeur idéal pour une pression de 0 Kpa
+    // Il s'obtient ainsi : x = 0.94 * Vmax  (avec Vmax la valeur pour VCC soit 4096)
+
+    // Nous faison cinq lectures de suite afin de réchaufer le capteur
+    for (int i=0; i <= 5; i++){
+      delay(500);
+      calibrer = 3850.24 - analogRead(VacuumSensor);
+    }
+    return calibrer;
+  }
+
+  /* Fonction de conversion valeur numérique <> pression en Kpa */
+  /*
+   * D'aprés le datasheet du MP3V5050V
+   * Vout = Vs * (P * 0.018 + 0.94)
+   * soit : P = ((Vout / Vs) - 0.94) / 0.018
+   * avec Vout = Vraw + Vcalibration et Vs = Vmax = 4096
+   * pour convertir de kpa to Hg (inch of mercure) il faut multiplier par 0.295301
+   */
+  double VacRaw2kPa(int raw, double calibration) {
+    return ((((raw + calibration) / 4096.0) - 0.94) / 0.018)*0.295301;  // multiplie par 0.295301 pour avoir la valeur en Hg
+  }
+#endif
+
 // Check the state of the valves position reedswitch
 void CheckValvePos(){
     bool valveCurrentState;
@@ -839,6 +915,9 @@ int remoteReset(String command) {
     savedEventCount = 0;
     Serial.printlnf("Nouvelle génération de no de série maintenant: %lu", newGenTimestamp);
     pushToPublishQueue(evNewGenSN, -1, millis());
+    return 0;
+  } else {
+    return -1;
   }
 }
 
@@ -852,8 +931,6 @@ typedef struct Event{
 */
 // Formattage standard pour les données sous forme JSON
 String makeJSON(uint16_t numSerie, uint32_t timeStamp, uint32_t timer, int eData, String eName, bool replayFlag){
-    /*char* formattedEName = String::format("%c", eName.c_str());*/
-    /*sprintf(publishString,"{\"noSerie\": %u,\"timer\": %lu,\"eData\":%d,\"eName\": \"%s\"}", numSerie, timer, eData, eName.c_str());*/
     sprintf(publishString,"{\"noSerie\": %u,\"generation\": %lu,\"timestamp\": %lu,\"timer\": %lu,\"eData\":%d,\"eName\": \"%s\",\"replay\":%d}",
                               numSerie, newGenTimestamp, timeStamp, timer, eData, eName.c_str(), replayFlag);
     Serial.printlnf ("makeJSON: %s",publishString);
