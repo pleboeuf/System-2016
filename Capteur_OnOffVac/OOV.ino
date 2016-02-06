@@ -2,7 +2,7 @@
 /*#include "spark-dallas-temperature.h"
 #include "OneWire.h"*/
 
-/*SYSTEM_THREAD(ENABLED);*/
+SYSTEM_THREAD(ENABLED);
 STARTUP(WiFi.selectAntenna(ANT_EXTERNAL));
 STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 
@@ -281,7 +281,7 @@ void setup() {
     #endif
     delay(300UL); // Pour partir le moniteur série pour débug
 // Scanning Wifi access point
-    WiFiAccessPoint aps[20];
+    /*WiFiAccessPoint aps[20];
     int found = WiFi.scan(aps, 20);
     for (int i=0; i<found; i++) {
       WiFiAccessPoint& ap = aps[i];
@@ -297,7 +297,7 @@ void setup() {
       }
     Serial.printlnf("Connexion à: %s", ap.ssid);
     WiFi.connect();
-    }
+    }*/
 
 // Enregistrement des fonctions et variables disponible par le nuage
     Serial.println("Enregistrement des variables et fonctions\n");
