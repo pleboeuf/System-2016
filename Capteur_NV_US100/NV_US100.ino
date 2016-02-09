@@ -1,10 +1,10 @@
 // This #include statement was automatically added by the Particle IDE.
-/*#include "spark-dallas-temperature.h"
-#include "OneWire.h"*/
+#include "spark-dallas-temperature.h"
+#include "OneWire.h"
 
 SYSTEM_THREAD(ENABLED);
-STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 STARTUP(WiFi.selectAntenna(ANT_EXTERNAL));
+STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 
 
 // Paramètres pour la compilation conditionnelle
@@ -13,8 +13,8 @@ STARTUP(WiFi.selectAntenna(ANT_EXTERNAL));
 #define MB7389 2
 #define DISTANCESENSOR US100    //Pour compilation conditionnelle du serial handler: US100. MB7389, None
 #define PUMPMOTORDETECT false   //Pour compilation conditionnelle de la routin e d'interruption
-#define HASDS18B20SENSOR false  //Pour le code spécifique au captgeur de température DS18B20
-#define HASHEATING false        //Pour le chauffage du boitier
+#define HASDS18B20SENSOR true  //Pour le code spécifique au captgeur de température DS18B20
+#define HASHEATING true        //Pour le chauffage du boitier
 #define HASVACUUMSENSOR false   //Un capteur de vide est installé
 //
 
@@ -28,7 +28,7 @@ STARTUP(WiFi.selectAntenna(ANT_EXTERNAL));
 #define numReadings 10           // Number of readings to average for filtering
 #define minDistChange 2.0 * numReadings      // Minimum change in distance to publish an event (1/16")
 #define minTempChange 0.5 * numReadings      // Minimum temperature change to publish an event
-#define minVacuumChange 1.0 // Changement de 1.0 Po Hg avant publication du niveau de vide
+#define minVacuumChange 0.01 // Changement de 0.01 Po Hg avant publication du niveau de vide
 #define maxRangeUS100 2500 // Distance maximale valide pour le captgeur
 #define maxRangeMB7389 4999 // Distance maximale valide pour le captgeur
 #define ONE_WIRE_BUS D4 //senseur sur D4
@@ -482,6 +482,11 @@ void readAllSensors() {
           pushToPublishQueue(evAmbientTemp, (int)prev_TempExterne, now);
       }
     #endif
+
+    #if HASVACUUMSENSOR
+        pushToPublishQueue(evVacuum, (int)(prev_VacAnalogvalue * 100), now);;
+    #endif
+
     samplingInterval = slowSampling;   // Les mesure sont stable, réduire la fréquence de mesure.
   }
 
@@ -795,9 +800,10 @@ Section réservé pour le code de mesure du vide (vacuum)
   void VacReadVacuumSensor(){
     int val = analogRead(VacuumSensor);
     double VacAnalogvalue = VacRaw2kPa(val, VacCalibration);
+    Serial.printlnf("Vac raw= %d, VacAnalogvalue= %f, DeltaVac= %f", val, VacAnalogvalue, abs(VacAnalogvalue - prev_VacAnalogvalue) );
     if (abs(VacAnalogvalue - prev_VacAnalogvalue) > minVacuumChange){  // Publish event in case of a change in vacuum
         lastPublish = now;                                             // reset the max publish delay counter.
-        pushToPublishQueue(evVacuum, (int)(VacAnalogvalue * 10), now); // The measurements value is converted to integers for storage in the event buffer
+        pushToPublishQueue(evVacuum, (int)(VacAnalogvalue * 100), now); // The measurements value is converted to integers for storage in the event buffer
         prev_VacAnalogvalue = VacAnalogvalue;                          // The value will be divided by 10 for display to recover the decimal
     }
   }
@@ -809,10 +815,11 @@ Section réservé pour le code de mesure du vide (vacuum)
     // 3850.24 correspond à la valeur idéal pour une pression de 0 Kpa
     // Il s'obtient ainsi : x = 0.94 * Vmax  (avec Vmax la valeur pour VCC soit 4096)
 
-    // Nous faison cinq lectures de suite afin de réchaufer le capteur
+    // Nous faisons cinq lectures de suite afin de réchaufer le capteur
     for (int i=0; i <= 5; i++){
       delay(500);
-      calibrer = 3850.24 - analogRead(VacuumSensor);
+      /*calibrer = 3850.24 - analogRead(VacuumSensor);*/
+      calibrer = 0.0; // Mesure en absolue
     }
     return calibrer;
   }
