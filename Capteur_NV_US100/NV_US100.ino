@@ -13,8 +13,8 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 #define MB7389 2
 #define DISTANCESENSOR US100    //Pour compilation conditionnelle du serial handler: US100. MB7389, None
 #define PUMPMOTORDETECT false   //Pour compilation conditionnelle de la routin e d'interruption
-#define HASDS18B20SENSOR true  //Pour le code spécifique au captgeur de température DS18B20
-#define HASHEATING true        //Pour le chauffage du boitier
+#define HASDS18B20SENSOR false  //Pour le code spécifique au captgeur de température DS18B20
+#define HASHEATING false        //Pour le chauffage du boitier
 #define HASVACUUMSENSOR false   //Un capteur de vide est installé
 //
 
