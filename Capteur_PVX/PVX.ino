@@ -35,6 +35,7 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 #define DallasSensorResolution 9 // Résolution de lecture de température
 #define MaxHeatingPowerPercent 50 // Puissance maximale appliqué sur la résistance de chauffage
 #define HeatingSetPoint 30 // Température cible à l'intérieur du boitier
+#define DefaultPublishDelay 10 // Interval de publication par défaut
 
 
 // Nom des indices du tableau eventName
@@ -118,8 +119,8 @@ int motorState = A1; // input pour Pompe marche/arrêt
 int heater = D3; //Contrôle le transistor du chauffage
 #if HASVACUUMSENSOR
   int VacuumSensor = A0; //Analogue input pour la mesure du vide
-  float VacCalibration;  // Variable contenant la valeur de calibration du capteur.
-  double VacAnalogvalue;      // Mesure du vide
+  float VacCalibration = 0;  // Variable contenant la valeur de calibration du capteur.
+  double VacAnalogvalue = 0;      // Mesure du vide
   double prev_VacAnalogvalue = 0; // Mesure précédente du vide
 #endif
 
@@ -171,7 +172,7 @@ unsigned long lastTime = 0UL;
 char publishString[buffSize];
 retained time_t newGenTimestamp = 0;
 retained uint16_t noSerie = 0; //Mettre en Backup RAM
-int maxPublishInterval = 2;
+int maxPublishInterval = DefaultPublishDelay;
 unsigned long maxPublishDelay = maxPublishInterval * minute;
 int pumpEvent = 0;
 bool connWasLost = false;
