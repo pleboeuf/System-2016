@@ -281,24 +281,8 @@ void setup() {
                                 // RX = LOW pour arrêter le capteur, RX = HIGH pour le démarrer
     #endif
     delay(300UL); // Pour partir le moniteur série pour débug
-// Scanning Wifi access point
-    /*WiFiAccessPoint aps[20];
-    int found = WiFi.scan(aps, 20);
-    for (int i=0; i<found; i++) {
-      WiFiAccessPoint& ap = aps[i];
-      Serial.printlnf("SSID: %s, Security: %d, Channel: %d, RSSI: %d", ap.ssid, ap.security, ap.channel, ap.rssi);
-      if (ap.ssid == "BoilerHouse"){
-        WiFi.setCredentials("BoilerHouse", "Station Shefford");
-      } else if (ap.ssid == "PumpHouse"){
-        WiFi.setCredentials("PumpHouse", "Station Laporte");
-      } else if (ap.ssid == "PL-Net"){
-        WiFi.setCredentials("PL-Net", "calvin et hobbes");
-      } else if (ap.security == 0){
-        WiFi.setCredentials(ap.ssid);
-      }
-    Serial.printlnf("Connexion à: %s", ap.ssid);
-    WiFi.connect();
-    }*/
+    WiFi.setCredentials("BoilerHouse", "Station Shefford");
+    WiFi.setCredentials("PumpHouse", "Station Laporte");
 
 // Enregistrement des fonctions et variables disponible par le nuage
     Serial.println("Enregistrement des variables et fonctions\n");
