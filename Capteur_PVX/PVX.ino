@@ -33,8 +33,8 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 #define maxRangeMB7389 4999 // Distance maximale valide pour le captgeur
 #define ONE_WIRE_BUS D4 //senseur sur D4
 #define DallasSensorResolution 9 // Résolution de lecture de température
-#define MaxHeatingPowerPercent 50 // Puissance maximale appliqué sur la résistance de chauffage
-#define HeatingSetPoint 30 // Température cible à l'intérieur du boitier
+#define MaxHeatingPowerPercent 70 // Puissance maximale appliqué sur la résistance de chauffage
+#define HeatingSetPoint 25 // Température cible à l'intérieur du boitier
 #define DefaultPublishDelay 10 // Interval de publication par défaut
 
 
@@ -64,7 +64,7 @@ String eventName[] = {
   "pump/T1",  // Pump state. Pump start
   "pump/T2", // Pump state. Pump stop
   "sensor/level", // Tank level. Post processing required for display
-  "sensor/sensorTemp", // Temperature read on the US100 senson
+  "sensor/US100sensorTemp", // Temperature read on the US100 senson
   "sensor/outOfRange ", // Level sensor is out of max range
   "sensor/openSensorV1", // Valve 1 open position sensor state. Active LOW
   "sensor/closeSensorV1", // Valve 1 close position sensor state. Active LOW
@@ -671,7 +671,8 @@ int AvgTempReading(int thisReading){
                   insideTempC = ds18b20Sensors.getTempC(enclosureThermometer);
                   if (isValidDs18b20Reading(insideTempC)) break;
               }
-              if (isValidDs18b20Reading(insideTempC)){
+              validEnclosureTemp = isValidDs18b20Reading(insideTempC);
+              if (validEnclosureTemp){
                   // Si la mesure est valide
                   if (abs(insideTempC - prev_EnclosureTemp) >= 1){
                       // Publier s'il y a eu du changement
@@ -679,10 +680,8 @@ int AvgTempReading(int thisReading){
                       prev_EnclosureTemp = insideTempC;
                   }
                   Serial.printlnf("DS18b20 interne: %f, try= %d", insideTempC, i + 1);
-                  validEnclosureTemp = true;
               } else {
                   Serial.printlnf("DS18B20 interne: Erreur de lecture");
-                  validEnclosureTemp = false;
                   insideTempC = 99;
               }
 
@@ -691,7 +690,8 @@ int AvgTempReading(int thisReading){
                   outsideTempC = ds18b20Sensors.getTempC(outsideThermometer); // 5 tentatives de lecture au maximum
                   if (isValidDs18b20Reading (outsideTempC)) break;
               }
-              if (isValidDs18b20Reading (outsideTempC)){
+              validTempExterne = isValidDs18b20Reading (outsideTempC);
+              if (validTempExterne){
                   // Si la mesure est valide
                   if (abs(outsideTempC - prev_TempExterne) >= 1){
                       // Publier s'il y a eu du changement
@@ -699,11 +699,9 @@ int AvgTempReading(int thisReading){
                       prev_TempExterne = outsideTempC;
                   }
                   Serial.printlnf("DS18b20 externe: %f, try= %d", outsideTempC, i + 1);
-                  validTempExterne = true;
               } else {
                   // Si la measure est invalide
                   Serial.printlnf("DS18B20 externe: Erreur de lecture");
-                  validTempExterne = false;
                   outsideTempC = 99;
               }
 
@@ -721,16 +719,15 @@ int AvgTempReading(int thisReading){
                       break;
                   }
               }
-              if (isValidDs18b20Reading(insideTempC)){
+              validEnclosureTemp = isValidDs18b20Reading(insideTempC);
+              if (validEnclosureTemp){
                   if (abs(insideTempC - prev_EnclosureTemp) >= 1){
                       pushToPublishQueue(evEnclosureTemp, (int) insideTempC, now);
                       prev_EnclosureTemp = insideTempC;
                   }
                   Serial.printlnf("DS18b20 interne: %f", insideTempC);
-                  validEnclosureTemp = true;
               } else {
                   Serial.printlnf("DS18B20 interne: Erreur de lecture");
-                  validEnclosureTemp = false;
                   insideTempC = 99;
               }
               return (insideTempC);
@@ -741,9 +738,9 @@ int AvgTempReading(int thisReading){
 
   bool isValidDs18b20Reading(float reading){
       if (reading > -127 && reading < 85){
-          return true;
+          return (true);
       } else {
-          return false;
+          return (false);
       }
   }
 #endif
@@ -754,15 +751,15 @@ int AvgTempReading(int thisReading){
 int simpleThermostat(double setPoint){
     Particle.process();
     // executer la fonction de thermostat si on a un capteur de température
-    if (ds18b20Count > 1){
+    if (ds18b20Count > 0){
         // executer la fonction de thermostat si la température interne est valide
-        if (validEnclosureTemp == true){
+        if (prev_EnclosureTemp != 99){
             if (prev_EnclosureTemp < (setPoint - 0.5)){
                 HeatingPower =  256 *  MaxHeatingPowerPercent /100;
             } else if (prev_EnclosureTemp > (setPoint + 0.5)){
                 HeatingPower =  0;
             }
-        } else if(validEnclosureTemp == false){
+        } else if(prev_EnclosureTemp == 99){
         // Si non mettre le chauffage à 1/4 de puissance pour éviter le gel.
             HeatingPower =  0.5 * (256 *  MaxHeatingPowerPercent /100); // Chauffage fixe au 1/4 de la puissance
         }
