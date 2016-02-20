@@ -1,6 +1,8 @@
+// Code for RS1, RS2, RF2
 // This #include statement was automatically added by the Particle IDE.
 #include "spark-dallas-temperature.h"
 #include "OneWire.h"
+#include "photon-wdgs.h"
 
 SYSTEM_THREAD(ENABLED);
 STARTUP(WiFi.selectAntenna(ANT_EXTERNAL));
@@ -319,11 +321,6 @@ void setup() {
     replayBuffLen = 0;
     replayPtr = readPtr;
 
-// initialisation des capteurs de températures
-    #if HASDS18B20SENSOR
-        initDS18B20Sensors();
-    #endif
-
 // Initialisation des pin I/O
     pinMode(led, OUTPUT);
     pinMode(ssrRelay, OUTPUT);
@@ -349,11 +346,19 @@ void setup() {
         VacCalibration = VacCalibre();
     #endif
 
+// initialisation des capteurs de températures
+    #if HASDS18B20SENSOR
+        initDS18B20Sensors();
+    #endif
+// show position of valves initially
+    CheckValvePos(true);
+
     Time.zone(-4);
     Time.setFormat(TIME_FORMAT_ISO8601_FULL);
     Particle.syncTime();
     pushToPublishQueue(evBootTimestamp, 0,  millis());
 
+    PhotonWdgs::begin(true,true,10000,TIMER7);
     lastPublish = millis(); //Initialise le temps initial de publication
     changeTime = lastPublish; //Initialise le temps initial de changement de la pompe
 }
@@ -395,14 +400,16 @@ void setup() {
     Boucle principale
 */
 void loop(){
+  PhotonWdgs::tickle();
   if (millis() > nextSampleTime) {
       nextSampleTime = millis() + samplingInterval - 1;
       readAllSensors();
+      CheckValvePos(false);
       #if HASHEATING
         simpleThermostat(HeatingSetPoint);
       #endif
   }
-  CheckValvePos();
+  CheckValvePos(false);
   Particle.process();
 }
 
@@ -611,17 +618,22 @@ void readAllSensors() {
           dist_mm = AvgDistReading(currentReading); // Average the distance readings
           Serial.printlnf("Dist.: %dmm, now= %d, lastPublish= %d, RSSI= %d", (int)(dist_mm / numReadings), now, lastPublish, WiFi.RSSI());
           if (abs(dist_mm - prev_dist_mm) > minDistChange){         // Publish event in case of a change in temperature
-                  lastPublish = now;                               // reset the max publish delay counter.
-                  pushToPublishQueue(evDistance, (int)(dist_mm / numReadings), now);
-                  prev_dist_mm = dist_mm;
-                  samplingInterval = fastSampling;   //Measurements NOT stable, increase the sampling frequency
-              }
+              lastPublish = now;                               // reset the max publish delay counter.
+              pushToPublishQueue(evDistance, (int)(dist_mm / numReadings), now);
+              prev_dist_mm = dist_mm;
+              samplingInterval = fastSampling;   //Measurements NOT stable, increase the sampling frequency
+          }
 
       } else {
-          pushToPublishQueue(evOutOfRange, 9999, now);
-          Serial.print("Hors portée: ");             // output distance to serial monitor
-          Serial.print(currentReading, DEC);
-          Serial.println("mm ");
+          dist_mm = 9999; // Code d'erreur
+          if (abs(dist_mm - prev_dist_mm) > minDistChange){         // Publish event in case of a change in temperature
+            lastPublish = now;                               // reset the max publish delay counter.
+            pushToPublishQueue(evOutOfRange, dist_mm, now);
+            prev_dist_mm = dist_mm;
+            Serial.print("Hors portée: ");             // output distance to serial monitor
+            Serial.print(currentReading, DEC);
+            Serial.println("mm ");
+          }
       }
    }
 #endif
@@ -670,6 +682,9 @@ int AvgTempReading(int thisReading){
               for (i = 0; i < maxTry; i++){
                   insideTempC = ds18b20Sensors.getTempC(enclosureThermometer);
                   if (isValidDs18b20Reading(insideTempC)) break;
+              }
+              if (insideTempC > 30.0){
+                analogWrite(heater, HeatingPower); //for enclosure safety
               }
               validEnclosureTemp = isValidDs18b20Reading(insideTempC);
               if (validEnclosureTemp){
@@ -820,14 +835,13 @@ Section réservé pour le code de mesure du vide (vacuum)
 #endif
 
 // Check the state of the valves position reedswitch
-void CheckValvePos(){
+void CheckValvePos(bool statusAll){
     bool valveCurrentState;
     String stateStr;
 
     for (int i=0; i <= 3; i++) {
         valveCurrentState = digitalRead(ValvePos_pin[i]);
-        if (ValvePos_state[i] != valveCurrentState)
-        {
+        if (statusAll == true || (ValvePos_state[i] != valveCurrentState)){
             delay(debounceDelay);  // Debounce time
             // time_t time = Time.now();
             valveCurrentState = digitalRead(ValvePos_pin[i]);
