@@ -442,9 +442,9 @@ void readAllSensors() {
       if (PumpCurrentState != PumpOldState){
         PumpOldState = PumpCurrentState;
         if (PumpCurrentState == true){
-          pumpEvent = evPompe_T1;
-        } else {
           pumpEvent = evPompe_T2;
+        } else {
+          pumpEvent = evPompe_T1;
         }
         pushToPublishQueue(pumpEvent, PumpCurrentState, changeTime);
       }
