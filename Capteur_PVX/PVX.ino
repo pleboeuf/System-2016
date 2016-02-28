@@ -1,7 +1,7 @@
 // Code for PV1, PV2,PV3
 // This #include statement was automatically added by the Particle IDE.
-/*#include "spark-dallas-temperature.h"
-#include "OneWire.h"*/
+//#include "spark-dallas-temperature.h"
+//#include "OneWire.h"
 #include "photon-wdgs.h"
 
 SYSTEM_THREAD(ENABLED);
@@ -18,6 +18,7 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 #define HASDS18B20SENSOR false  //Pour le code spécifique au captgeur de température DS18B20
 #define HASHEATING false        //Pour le chauffage du boitier
 #define HASVACUUMSENSOR true    //Un capteur de vide est installé
+#define HASVALVES false         //Des valves sont relié à ce capteur
 //
 
 // General definitions
@@ -25,19 +26,20 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 #define second 1000UL             // 1000 millisecond per sesond
 #define unJourEnMillis (24 * 60 * 60 * second)
 #define debounceDelay 50    // Debounce time for valve position readswitch
-#define fastSampling  1000UL   // in milliseconds
-#define slowSampling  2000UL    // in milliseconds
+#define fastSampling  6000UL   // in milliseconds
+#define slowSampling  10000UL    // in milliseconds
 #define numReadings 10           // Number of readings to average for filtering
 #define minDistChange 2.0 * numReadings      // Minimum change in distance to publish an event (1/16")
 #define minTempChange 0.5 * numReadings      // Minimum temperature change to publish an event
 #define minVacuumChange 0.01 // Changement de 0.01 Po Hg avant publication du niveau de vide
 #define maxRangeUS100 2500 // Distance maximale valide pour le captgeur
-#define maxRangeMB7389 4999 // Distance maximale valide pour le captgeur
+#define maxRangeMB7389 1900 // Distance maximale valide pour le captgeur
 #define ONE_WIRE_BUS D4 //senseur sur D4
 #define DallasSensorResolution 9 // Résolution de lecture de température
 #define MaxHeatingPowerPercent 70 // Puissance maximale appliqué sur la résistance de chauffage
 #define HeatingSetPoint 25 // Température cible à l'intérieur du boitier
 #define DefaultPublishDelay 10 // Interval de publication par défaut
+#define TimeoutDelay 3 * slowSampling
 
 
 // Nom des indices du tableau eventName
@@ -126,6 +128,9 @@ int heater = D3; //Contrôle le transistor du chauffage
   double prev_VacAnalogvalue = 0; // Mesure précédente du vide
 #endif
 
+// Mesure du signal WiFi
+int rssi = 0;
+
 // Variables liés à la pompe
 bool PumpOldState = true;
 bool PumpCurrentState = true;
@@ -164,11 +169,13 @@ int allDistReadings[numReadings];
 
 // Variables liés au temps
 unsigned long lastPublish = millis();
+unsigned long lastAllPublish = 0;
 unsigned long now;
 unsigned long lastRTCSync = millis();
 unsigned int samplingInterval = fastSampling;
 unsigned long nextSampleTime = 0;
-unsigned long lastTime = 0UL;
+unsigned long nextUnitTime = 0;
+unsigned long lastTime = 0;
 
 // Variables liés aux publications
 char publishString[buffSize];
@@ -270,12 +277,22 @@ ExternalRGB myRGB(RGBled_Red, RGBled_Green, RGBLed_Blue);
   }
 #endif
 
-
-
 void setup() {
 // connect RX to Echo/Rx (US-100), TX to Trig/Tx (US-100)
     Serial.begin(115200); // Pour débug
     Serial1.begin(9600);  // Le capteur US-100 fonctionne à 9600 baud
+
+// Enregistrement des fonctions et variables disponible par le nuage
+    Serial.println("Enregistrement des variables et fonctions\n");
+    Particle.variable("relayState", RelayState);
+    Particle.variable("rssi", rssi);
+    #if HASDS18B20SENSOR
+        Particle.variable("DS18B20Cnt", ds18b20Count);
+    #endif
+    Particle.function("relay", toggleRelay);
+    Particle.function("set", remoteSet);
+    Particle.function("reset", remoteReset);
+    Particle.function("replay", replayEvent);
 
     #if DISTANCESENSOR == MB7389
       Serial1.halfduplex(true); // Ce capteur envoie seulement des données sésie dans une seule direction
@@ -285,17 +302,6 @@ void setup() {
     delay(300UL); // Pour partir le moniteur série pour débug
     WiFi.setCredentials("BoilerHouse", "Station Shefford");
     WiFi.setCredentials("PumpHouse", "Station Laporte");
-
-// Enregistrement des fonctions et variables disponible par le nuage
-    Serial.println("Enregistrement des variables et fonctions\n");
-    Particle.variable("relayState", RelayState);
-    #if HASDS18B20SENSOR
-        Particle.variable("DS18B20Cnt", ds18b20Count);
-    #endif
-    Particle.function("relay", toggleRelay);
-    Particle.function("set", remoteSet);
-    Particle.function("reset", remoteReset);
-    Particle.function("replay", replayEvent);
 
     delay(3000); // Pour partir le moniteur série
 
@@ -351,16 +357,20 @@ void setup() {
         initDS18B20Sensors();
     #endif
 // show position of valves initially
-    CheckValvePos(true);
+    #if HASVALVES
+      CheckValvePos(true);
+    #endif
 
     Time.zone(-4);
     Time.setFormat(TIME_FORMAT_ISO8601_FULL);
     Particle.syncTime();
     pushToPublishQueue(evBootTimestamp, 0,  millis());
 
-    PhotonWdgs::begin(true,true,10000,TIMER7);
+    PhotonWdgs::begin(true, true, TimeoutDelay, TIMER7);
     lastPublish = millis(); //Initialise le temps initial de publication
     changeTime = lastPublish; //Initialise le temps initial de changement de la pompe
+    /*tmr1.start();
+    tmr2.start();*/
 }
 
 /*
@@ -395,68 +405,61 @@ void setup() {
   }
 #endif
 
-
 /*
     Boucle principale
 */
 void loop(){
-  PhotonWdgs::tickle();
-  if (millis() > nextSampleTime) {
-      nextSampleTime = millis() + samplingInterval - 1;
+  unsigned long LoopTime = millis();
+// Execute every nextSampleTime: read all sensors and reset watchdog
+  if (LoopTime > nextSampleTime) {
+      nextSampleTime = LoopTime + samplingInterval - 1;
+      nextUnitTime = LoopTime + (1 * second) - 1;
+      digitalWrite(led, LOW); // Pour indiqué le début de la prise de mesure
+      PhotonWdgs::tickle(); // Reset watchdog
       readAllSensors();
-      CheckValvePos(false);
-      #if HASHEATING
-        simpleThermostat(HeatingSetPoint);
-      #endif
+      PublishAll();
+      rssi = WiFi.RSSI();
+      digitalWrite(led, HIGH); // Pour indiqué la fin de la prise de mesure
+
+// Execute every nextUnitTime =  1 seconde: read all sensors
+  } else if (LoopTime > nextUnitTime){
+    nextUnitTime = LoopTime + (1 * second) - 1;
+    digitalWrite(led, LOW); // Pour indiqué le début de la prise de mesure
+    PhotonWdgs::tickle(); // Reset watchdog
+    delay(20UL);
+    PublishAll();
+    digitalWrite(led, HIGH); // Pour indiqué la fin de la prise de mesure
   }
-  CheckValvePos(false);
-  Particle.process();
 }
 
-// Read the sensors attached to the device
-void readAllSensors() {
-  digitalWrite(led, LOW); // Pour indiqué le début de la prise de mesure
+void PublishAll(){
+  // Publie au moins une fois à tous les "maxPublishDelay" millisecond
   now = millis();
 
-  #if HASDS18B20SENSOR
-      readDS18b20temp();
+  #if HASVALVES
+    CheckValvePos(false); // publish if state changed
   #endif
 
-  #if DISTANCESENSOR == US100
-      Readtemp_US100();
-      ReadDistance_US100();
+  #if HASHEATING
+    simpleThermostat(HeatingSetPoint);
   #endif
-
-  #if DISTANCESENSOR == MB7389
-      ReadDistance_MB7389();
-  #endif
-
-  #if HASVACUUMSENSOR
-      VacReadVacuumSensor();
-  #endif
-
-  digitalWrite(led, HIGH); // Pour indiqué la fin de la prise de mesure
 
   #if PUMPMOTORDETECT
   // Publication de l'état de la pompe s'il y a eu changement
-      if (PumpCurrentState != PumpOldState){
-        PumpOldState = PumpCurrentState;
-        if (PumpCurrentState == true){
-          pumpEvent = evPompe_T2;
-        } else {
-          pumpEvent = evPompe_T1;
-        }
-        pushToPublishQueue(pumpEvent, PumpCurrentState, changeTime);
+    if (PumpCurrentState != PumpOldState){
+      PumpOldState = PumpCurrentState;
+      if (PumpCurrentState == false){
+        pumpEvent = evPompe_T1;
+      } else {
+        pumpEvent = evPompe_T2;
       }
+      pushToPublishQueue(pumpEvent, PumpCurrentState, changeTime);
+    }
   #endif
-// Pour permettre la modification de maxPublishDelay par le nuage
-  maxPublishDelay = maxPublishInterval * minute;
 
-// Publie au moins une fois à tous les "maxPublishDelay" millisecond
-  now = millis();
-  if (now - lastPublish > maxPublishDelay){
+  if (now - lastAllPublish > maxPublishDelay){
+    lastAllPublish = now;
 
-    lastPublish = now;
     #if DISTANCESENSOR == US100
       pushToPublishQueue(evDistance, (int)(dist_mm / numReadings), now);
       pushToPublishQueue(evUS100Temperature, (int)(TempUS100/ numReadings), now);
@@ -478,8 +481,9 @@ void readAllSensors() {
     #if HASVACUUMSENSOR
         pushToPublishQueue(evVacuum, (int)(prev_VacAnalogvalue * 100), now);;
     #endif
-
-    samplingInterval = slowSampling;   // Les mesure sont stable, réduire la fréquence de mesure.
+    #if HASVALVES
+      CheckValvePos(true);
+    #endif
   }
 
 // Synchronisation du temps avec Particle Cloud une fois par jour
@@ -496,6 +500,32 @@ void readAllSensors() {
     bool success = replayQueuedEvents();
     Serial.printlnf("replayBuffLen = %u, Replay = %u, Status: %s", replayBuffLen, replayPtr, (success ? "Fait" : "Pas Fait"));
   }
+}
+
+// Read the sensors attached to the device
+void readAllSensors() {
+  PhotonWdgs::tickle(); // reset watchdog timer
+  digitalWrite(led, LOW); // Pour indiqué le début de la prise de mesure
+  now = millis();
+
+  #if HASDS18B20SENSOR
+      readDS18b20temp();
+  #endif
+
+  #if DISTANCESENSOR == US100
+      Readtemp_US100();
+      ReadDistance_US100();
+  #endif
+
+  #if DISTANCESENSOR == MB7389
+      ReadDistance_MB7389();
+  #endif
+
+  #if HASVACUUMSENSOR
+      VacReadVacuumSensor();
+  #endif
+// Pour permettre la modification de maxPublishDelay par le nuage
+  maxPublishDelay = maxPublishInterval * minute;
 }
 
 #if HASDS18B20SENSOR
@@ -691,7 +721,7 @@ int AvgTempReading(int thisReading){
                   // Si la mesure est valide
                   if (abs(insideTempC - prev_EnclosureTemp) >= 1){
                       // Publier s'il y a eu du changement
-                      pushToPublishQueue(evEnclosureTemp, (int) insideTempC, now);
+//                      pushToPublishQueue(evEnclosureTemp, (int) insideTempC, now);
                       prev_EnclosureTemp = insideTempC;
                   }
                   Serial.printlnf("DS18b20 interne: %f, try= %d", insideTempC, i + 1);
@@ -737,7 +767,7 @@ int AvgTempReading(int thisReading){
               validEnclosureTemp = isValidDs18b20Reading(insideTempC);
               if (validEnclosureTemp){
                   if (abs(insideTempC - prev_EnclosureTemp) >= 1){
-                      pushToPublishQueue(evEnclosureTemp, (int) insideTempC, now);
+//                      pushToPublishQueue(evEnclosureTemp, (int) insideTempC, now);
                       prev_EnclosureTemp = insideTempC;
                   }
                   Serial.printlnf("DS18b20 interne: %f", insideTempC);
@@ -782,7 +812,7 @@ int simpleThermostat(double setPoint){
         analogWrite(heater, HeatingPower);
         Serial.printlnf("HeatingPower= %d", HeatingPower);
         if (HeatingPower != prev_HeatingPower){
-            pushToPublishQueue(evHeatingPowerLevel, HeatingPower, now);
+//            pushToPublishQueue(evHeatingPowerLevel, HeatingPower, now);
             prev_HeatingPower = HeatingPower;
         }
     }
@@ -834,6 +864,7 @@ Section réservé pour le code de mesure du vide (vacuum)
   }
 #endif
 
+#if HASVALVES
 // Check the state of the valves position reedswitch
 void CheckValvePos(bool statusAll){
     bool valveCurrentState;
@@ -841,7 +872,7 @@ void CheckValvePos(bool statusAll){
 
     for (int i=0; i <= 3; i++) {
         valveCurrentState = digitalRead(ValvePos_pin[i]);
-        if (statusAll == true || (ValvePos_state[i] != valveCurrentState)){
+        if ((ValvePos_state[i] != valveCurrentState) || statusAll == true){
             delay(debounceDelay);  // Debounce time
             // time_t time = Time.now();
             valveCurrentState = digitalRead(ValvePos_pin[i]);
@@ -857,6 +888,7 @@ void CheckValvePos(bool statusAll){
         }
     }
 }
+#endif
 
 // Active ou désactive le relais SSR
 int toggleRelay(String command) {
