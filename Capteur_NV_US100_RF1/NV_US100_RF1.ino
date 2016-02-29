@@ -33,7 +33,7 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 #define minTempChange 0.5 * numReadings      // Minimum temperature change to publish an event
 #define minVacuumChange 0.01 // Changement de 0.01 Po Hg avant publication du niveau de vide
 #define maxRangeUS100 2500 // Distance maximale valide pour le captgeur
-#define maxRangeMB7389 4900 // Distance maximale valide pour le captgeur
+#define maxRangeMB7389 1900 // Distance maximale valide pour le captgeur
 #define ONE_WIRE_BUS D4 //senseur sur D4
 #define DallasSensorResolution 9 // Résolution de lecture de température
 #define MaxHeatingPowerPercent 70 // Puissance maximale appliqué sur la résistance de chauffage
@@ -812,7 +812,7 @@ int simpleThermostat(double setPoint){
         analogWrite(heater, HeatingPower);
         Serial.printlnf("HeatingPower= %d", HeatingPower);
         if (HeatingPower != prev_HeatingPower){
-            pushToPublishQueue(evHeatingPowerLevel, HeatingPower, now);
+            /*pushToPublishQueue(evHeatingPowerLevel, HeatingPower, now);*/
             prev_HeatingPower = HeatingPower;
         }
     }
