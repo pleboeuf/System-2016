@@ -1,94 +1,159 @@
 // **** Photon Sleep test ****
 
 // #include "Particle.h"
-#define sleepTimeInMinutes 1 // Duration of sleep
-#define awakeDelay 3000 // Delay just befor sleep
+#define sleepTimeInMinutes 2 // Duration of sleep
+#define resetCycleCountPin  B0 // Connect to Vcc to reset the cycle counter
+#define myEventName "Usage" // Usage data
 
 SYSTEM_MODE(SEMI_AUTOMATIC);
-/*SYSTEM_THREAD(ENABLED)*/
+SYSTEM_THREAD(ENABLED);
 
 unsigned long waitOTA;
 long sleepTimeInSec = 0;
-int cycleNumber = 0;
-int statusLed = D7;
+int cycleNumber     = 0;
+int statusLed       = D7;
+int addrCycleNo     = 0;
+int addrPrev_aw_Time = 10;
+int lastDay         = 0;
 
-void sendStream();
-void checkSignal();
+char publishStr[45];
+CellularSignal sig;
+
+float voltage     = 0;
+float prev_voltage = 0;
+float soc         = 0;
+float prev_soc    = 0;
+
+int signalRSSI    = 0;
+int prev_RSSI     = 0;
+int signalQuality = 0;
+int prev_QUAL     = 0;
+
+int      txPrec   = 0;      // Previous tx data count
+int      rxPrec   = 0;      // Previous rx data count
+int      deltaTx  = 0;      // Difference tx data count
+int      deltaRx  = 0;      // Difference rx data count
+
+uint32_t w_time   = 0; // Wakeup time in ms
+uint32_t s_time   = 0; // Go to sleep time in ms
+float aw_time     = 0; // Awake time in sec
+float prev_aw_time = 0; // Awake time in sec
 
 // System event handler to update firmware before sleep
 void handle_firmware_update_events(system_event_t event, int param)
 {
-    Serial1.printlnf("got event %d with value %d", event, param);
+    Serial1.printlnf("\ngot event %d with value %d\n", event, param);
     waitOTA = millis();
-    while (millis() - waitOTA < 30000)
-       Spark.process();
+    for(uint32_t ms = millis(); millis() - ms < 1000; Particle.process());
 }
 
 // called once on startup
 void setup() {
+    w_time = millis();
     Time.zone(-4);
-    pinMode(D0, INPUT);
+    pinMode(resetCycleCountPin, INPUT_PULLDOWN);
+    if (digitalRead(resetCycleCountPin) == TRUE) {
+            cycleNumber = 0;
+            EEPROM.put(addrCycleNo, cycleNumber); // Line used to initialized cycleNumber in EEPROM. Comment out after used.
+            prev_aw_time = 0;
+            EEPROM.put(addrPrev_aw_Time, prev_aw_time);
+    }
+    EEPROM.get(addrCycleNo, cycleNumber); // Get the cycleNumber from non-volatile storage
+    EEPROM.get(addrPrev_aw_Time, prev_aw_time); // Get the previous awake time for publication
+
     pinMode(statusLed, OUTPUT);
-
     Serial1.begin(115200);
-    Serial1.printlnf("\n\nPhoton STOP mode Sleep Test.  ##### Sleeping for %d min. Delay before sleep: %d ms #####", sleepTimeInMinutes, awakeDelay);
-    Serial1.printlnf("Initial wake-up time(ms): \t%d", millis());
+    /*Serial1.printlnf("\n\nPhoton DEEP SLEEP Test.  ##### Sleeping for %d min. Delay before sleep: %d ms #####", sleepTimeInMinutes, awakeDelay);*/
 
-    Particle.connect(); // Start network connection
-    waitUntil(Particle.connected); // Block until the cloud is connected
-    Particle.syncTime(); // Synchronize time with network
-    delay(1000); // Gives some time for the cloud to respond
+    Particle.connect();
+    waitUntil(Particle.connected)
+    syncRTC();
 
-    // listen for Wi-Fi Listen events and Firmware Update events
+    readCellularData(); // Initial readings
+
+    // Register events listener for OTA update
     System.on(firmware_update_pending, handle_firmware_update_events);
 }
 
 void loop() {
 
-    Serial1.printf("Cycle no.:\t%d\t", cycleNumber);
-    Serial1.println(Time.timeStr());
+    Serial1.printf("%d\t", cycleNumber);
+    Serial1.printf(Time.timeStr().c_str());
 
-    if(Particle.connected == false){
-      Particle.connect();
-      waitUntil(Particle.connected);
-    }
+    readBattery();
+    Serial1.printf("\t%2.4f\t%3.3f", voltage, soc);
     checkSignal(); // Print signal RSSI and quality
-    sendStream(cycleNumber); // Publish a dummy message for test
+    publishData(); // Publish a dummy message for test
 
-    /*waitUntil(Particle.connected); // Block until the cloud is connected*/
-    Serial1.printlnf("Sleep time(ms): \t%d", millis());
-    delay(awakeDelay); // Time required for event to show up in tbe Particle console
-    sleepTimeInSec = sleepTimeInMinutes * 60;
-    /*dummySleep(sleepTimeInSec); // Simulate sleep with delay loop. For test purpose*/
-    /*System.sleep(SLEEP_MODE_DEEP, sleepTimeInSec); // Deep sleep - Network shutdown and processor in stand-by mode. RESET on wake.*/
-    System.sleep(D0, RISING, sleepTimeInSec); // Device in STOP mode. NO RESET on wake. Preserve SRAM and registers.
-
-    Serial1.printlnf("\nWake-up time(ms): \t%d", millis());
     cycleNumber += 1;
+    EEPROM.put(addrCycleNo, cycleNumber); // Save it for next iteration
+
+    prev_aw_time = aw_time;
+    EEPROM.put(addrPrev_aw_Time, prev_aw_time); // Save it for next iteration
+
+    readCellularData(); // After publish
+    Serial1.printf("\t%d \t%d ", deltaTx, deltaRx);
+    s_time = millis(); // Sleep time is now
+    aw_time = (float)(s_time - w_time) / 1000;
+    Serial1.printlnf("\t%3.3f", aw_time);
+    for(uint32_t ms = millis(); millis() - ms < 100; Particle.process()); // Delay to complete printing
+
+    uint32_t dt = (sleepTimeInMinutes - Time.minute() % sleepTimeInMinutes) * 60 - Time.second(); // wake at next time boundary +30 seconds
+    System.sleep(SLEEP_MODE_DEEP, dt, SLEEP_NETWORK_STANDBY); // Deep sleep SLEEP_NETWORK_STANDBY - Network shutdown and processor in stand-by mode. RESET on wake.
 }
 
-void sendStream(int cycleCount) {
+void publishData() {
     bool success;
-
-    digitalWrite(statusLed, HIGH);
-    String data = "This is a 50 bytes long message. Cycle number = " + String(cycleCount);
-    Serial1.println("Publishing!: " + data);
-
-    success = Particle.publish("TestEvent", data, PRIVATE);
-    if (!success) {
-      Serial1.println("Publish FAILED!! ");
+    // Publish No, voltage, SOC, RSSI, QUALITY. Tx & Rx count, Awake time for the previous cycle
+    sprintf(publishStr, "%d, %2.4f, %3.3f, %d, %d, %d, %d, %3.3f",
+            cycleNumber - 1, prev_voltage, prev_soc, signalRSSI, signalQuality, deltaTx, deltaRx, prev_aw_time);
+    success = Particle.publish(myEventName, publishStr, PRIVATE);
+    /*for(uint32_t ms = millis(); millis() - ms < 1000; Particle.process()); // Gives some time to publish*/
+    uint32_t start = millis();
+    while (millis() - start < 5000UL) {
+            Particle.process(); // Wait a second to complete the publish
     }
-    digitalWrite(statusLed, LOW);
+    if(!success){
+      Serial1.print(" -- Publish failed! -- ");
+    }
+}
+
+void readBattery() {
+    FuelGauge fuel;
+    prev_voltage = voltage;
+    prev_soc = soc;
+    voltage = fuel.getVCell();
+    soc = fuel.getSoC();
+}
+
+void readCellularData() {
+    CellularData data;
+    if (!Cellular.getDataUsage(data)) {
+          Serial1.print("Error! Not able to get data.");
+    }
+    else {
+          deltaTx = data.tx_session - txPrec;
+          deltaRx = data.rx_session - rxPrec;
+          txPrec = data.tx_session;
+          rxPrec = data.rx_session;
+    }
 }
 
 void checkSignal() {
-  String s = "RSSI: \t" + String(WiFi.RSSI());
-  Serial1.println(s);
+    prev_RSSI = signalRSSI;
+    prev_QUAL = signalQuality;
+    sig = Cellular.RSSI();
+    signalRSSI = sig.rssi;
+    signalQuality = sig.qual;
 }
 
-// Do nothing for a period equivalent to sleep
-void dummySleep(long sleepTime){
-  for (int i = 0; i <= sleepTime; i++){
-    delay(982UL);
+void syncRTC(){
+  if (Time.year() < 2000){   // a new day calls for a sync
+      Particle.connect();
+      if (waitFor(Particle.connected, 1*60000)){
+        Particle.syncTime();
+        for(uint32_t ms = millis(); millis() - ms < 1000; Particle.process()); //wait for answer
+        /*lastDay = Time.day();*/
+      }
   }
 }

@@ -8,6 +8,8 @@ SYSTEM_THREAD(ENABLED);
 STARTUP(WiFi.selectAntenna(ANT_EXTERNAL));
 STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 
+// Firmware version
+#define FirmwareVersion 1.0.0   //Version originale du code.
 
 // Paramètres pour la compilation conditionnelle
 #define NONE 0
@@ -41,6 +43,12 @@ STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 #define DefaultPublishDelay 10 // Interval de publication par défaut
 #define TimeoutDelay 3 * slowSampling
 
+// Definition for vacuum transducer
+#define R1 18000                    // Pressur xducer scaling resistor 1
+#define R2 36000                    // Pressur xducer scaling resistor 2
+#define Vref 3.3                    // Analog input reference voltage
+#define K_fact 0.007652             // Vacuum xducer K factor
+#define Vs 5.0                      // Vacuum xducer supply voltage
 
 // Nom des indices du tableau eventName
 #define evPompe_T1 0
@@ -826,7 +834,7 @@ Section réservé pour le code de mesure du vide (vacuum)
 #if HASVACUUMSENSOR
   void VacReadVacuumSensor(){
     int val = analogRead(VacuumSensor);
-    double VacAnalogvalue = VacRaw2kPa(val, VacCalibration);
+    double VacAnalogvalue = VacRaw2kPa(val);
     Serial.printlnf("Vac raw= %d, VacAnalogvalue= %f, DeltaVac= %f", val, VacAnalogvalue, abs(VacAnalogvalue - prev_VacAnalogvalue) );
     if (abs(VacAnalogvalue - prev_VacAnalogvalue) > minVacuumChange){  // Publish event in case of a change in vacuum
         lastPublish = now;                                             // reset the max publish delay counter.
@@ -853,14 +861,18 @@ Section réservé pour le code de mesure du vide (vacuum)
 
   /* Fonction de conversion valeur numérique <> pression en Kpa */
   /*
-   * D'aprés le datasheet du MP3V5050V
-   * Vout = Vs * (P * 0.018 + 0.94)
-   * soit : P = ((Vout / Vs) - 0.94) / 0.018
-   * avec Vout = Vraw + Vcalibration et Vs = Vmax = 4096
+   * D'aprés le datasheet du MPXV6115V6U
+   * Vout = Vs * (Vac * 0.007652 + 0.92)
+   * soit : Vac_kpa = (Vout / Vs * k) - 0,92 / 0.007652
+   * avec Vout = Vref*Vraw*r1xr2/(4096*r2)
    * pour convertir de kpa to Hg (inch of mercure) il faut multiplier par 0.295301
    */
-  double VacRaw2kPa(int raw, double calibration) {
-    return ((((raw + calibration) / 4096.0) - 0.94) / 0.018)*0.295301;  // multiplie par 0.295301 pour avoir la valeur en Hg
+  double VacRaw2kPa(int raw) {
+    double Vout = Vref * raw * (R1 + R2)  / (4096UL * R2);      // Vout = Vref*Vraw*(r1_+r2_)/(4096*r2_)
+    double Vac_kpa = (Vout-(Vs-0.92))/(Vs*K_fact);  // Vac_kpa = (Vout-(Vs-0,92))/(Vs*k)
+    double Vac_inHg = Vac_kpa * 0.2953001;
+    /*Serial.printlnf("Vout= %f, Vac_kpa= %f, Vac_inHg= %f", Vout, Vac_kpa, Vac_inHg);*/
+    return Vac_inHg;                              // multiplie par 0.295301 pour avoir la valeur en Hg
   }
 #endif
 

@@ -15,9 +15,9 @@ Sleep duration: See #define sleepTimeInMinutes
 #define myEventName "Usage" // Usage data
 #define TimeBoundaryOffset 0 // Wake at time boundary plus some seconds
 
-#define sleepTimeInMinutes 5  // Duration of sleep
+#define sleepTimeInMinutes 60  // Duration of sleep
 
-SYSTEM_MODE(AUTOMATIC);
+SYSTEM_MODE(SEMI_AUTOMATIC);
 STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 
 /*int addr = 0;*/
@@ -81,6 +81,7 @@ void loop() {
     waitUntil(Particle.connected);
 
     readCellularData("Before publish \t", TRUE);
+    readBattery(); // print the battery voltage and state of charge
     checkSignal(); // Print signal RSSI and quality
     publishData(); // Publish a message indicating battery status
 
@@ -108,6 +109,12 @@ void publishData() {
             Particle.process(); // Wait a second to received the time.
     }
 
+}
+
+void readBattery() {
+    FuelGauge fuel;
+    String batValue = "Battery\t" + String(fuel.getVCell()) + "V\t" + String(fuel.getSoC()) + "%%\t";
+    //Serial1.printf( batValue );
 }
 
 void readCellularData(String s, bool prtFlag) {
