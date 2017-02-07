@@ -1,4 +1,4 @@
-// Code for PV1, PV2,PV3
+// Code for P1, P2,P3, V1, V2, V3
 // This #include statement was automatically added by the Particle IDE.
 //#include "spark-dallas-temperature.h"
 //#include "OneWire.h"
@@ -834,7 +834,7 @@ Section réservé pour le code de mesure du vide (vacuum)
 #if HASVACUUMSENSOR
   void VacReadVacuumSensor(){
     int val = analogRead(VacuumSensor);
-    double VacAnalogvalue = VacRaw2kPa(val);
+    double VacAnalogvalue = VacRaw2kPa(val, VacCalibration);
     Serial.printlnf("Vac raw= %d, VacAnalogvalue= %f, DeltaVac= %f", val, VacAnalogvalue, abs(VacAnalogvalue - prev_VacAnalogvalue) );
     if (abs(VacAnalogvalue - prev_VacAnalogvalue) > minVacuumChange){  // Publish event in case of a change in vacuum
         lastPublish = now;                                             // reset the max publish delay counter.
@@ -845,16 +845,16 @@ Section réservé pour le code de mesure du vide (vacuum)
 
   //Routine de calibration du capteur de vide
   double VacCalibre() {
-    double calibrer = 3850.24 - (double) analogRead(VacuumSensor);
+    double calibrer = 33340 - (double) analogRead(VacuumSensor);
 
     // 3850.24 correspond à la valeur idéal pour une pression de 0 Kpa
     // Il s'obtient ainsi : x = 0.94 * Vmax  (avec Vmax la valeur pour VCC soit 4096)
 
     // Nous faisons cinq lectures de suite afin de réchaufer le capteur
     for (int i=0; i <= 5; i++){
-      delay(500);
+      delay(50);
       /*calibrer = 3850.24 - analogRead(VacuumSensor);*/
-      calibrer = 0.0; // Mesure en absolue
+      calibrer = -490; // Mesure en absolue
     }
     return calibrer;
   }
@@ -867,8 +867,8 @@ Section réservé pour le code de mesure du vide (vacuum)
    * avec Vout = Vref*Vraw*r1xr2/(4096*r2)
    * pour convertir de kpa to Hg (inch of mercure) il faut multiplier par 0.295301
    */
-  double VacRaw2kPa(int raw) {
-    double Vout = Vref * raw * (R1 + R2)  / (4096UL * R2);      // Vout = Vref*Vraw*(r1_+r2_)/(4096*r2_)
+  double VacRaw2kPa(int raw, double calibration) {
+    double Vout = Vref * (raw + calibration) * (R1 + R2) / (4096UL * R2);      // Vout = Vref*Vraw*(r1_+r2_)/(4096*r2_)
     double Vac_kpa = (Vout-(Vs-0.92))/(Vs*K_fact);  // Vac_kpa = (Vout-(Vs-0,92))/(Vs*k)
     double Vac_inHg = Vac_kpa * 0.2953001;
     /*Serial.printlnf("Vout= %f, Vac_kpa= %f, Vac_inHg= %f", Vout, Vac_kpa, Vac_inHg);*/
@@ -966,6 +966,90 @@ int remoteReset(String command) {
   } else {
     return -1;
   }
+}
+
+// Sauvegarde d'un événement en mémoire
+bool writeEvent(struct Event thisEvent){
+  if (readPtr == (writePtr + 1) % buffSize){
+    return false; // Le buffer est plein, ne rien sauver.
+  }
+  eventBuffer[writePtr] = thisEvent;
+  writePtr = (writePtr + 1) % buffSize; // avancer writePtr
+  if ((writePtr - readPtr) < 0){
+      buffLen = writePtr - readPtr + buffSize;
+  } else {
+      buffLen = writePtr - readPtr;
+  }
+  if (savedEventCount < buffSize) { // increment the number of saved events up until buffer length
+    savedEventCount++;
+
+  } // Number of stored events in the buffer.
+   //pour debug
+  Serial.print("W------> " + DomainName + DeptName + eventName[thisEvent.namePtr]);
+  Serial.printlnf(": writeEvent:: writePtr= %u, readPtr= %u, buffLen= %u, noSerie: %u, eData: %u, timer: %u",
+                                     writePtr, readPtr, buffLen, thisEvent.noSerie, thisEvent.eData, thisEvent.timer);
+  return true;
+}
+
+// Lecture d'un événement en mémoire
+struct Event readEvent(){
+  struct Event thisEvent = {};
+  if (readPtr == writePtr){
+    Serial.printlnf("<------- readEvent:: writePtr= %u, readPtr= %u, buffLen= %u, *** buffer vide ***",
+                                      writePtr, readPtr, buffLen);
+    return thisEvent; // événement vide
+  }
+  thisEvent = eventBuffer[readPtr];
+  readPtr = (readPtr + 1) % buffSize;
+  if ((writePtr - readPtr) < 0){
+      buffLen = writePtr - readPtr + buffSize;
+  } else {
+      buffLen = writePtr - readPtr;
+  }
+  //pour debug
+  Serial.print("<R------ " + DomainName + DeptName + eventName[thisEvent.namePtr]);
+  Serial.printlnf(": readEvent:: writePtr= %u, readPtr= %u, buffLen= %u, noSerie: %u, eData: %u, timer: %u",
+                                    writePtr, readPtr, buffLen, thisEvent.noSerie, thisEvent.eData, thisEvent.timer);
+  return thisEvent;
+}
+
+// Re-lecture d'un événement en mémoire
+struct Event replayReadEvent(){
+  struct Event thisEvent = {};
+  if (replayPtr == writePtr){
+    Serial.printlnf("\n<--&&--- replayReadEvent:: writePtr= %u, replayPtr= %u, replayBuffLen= %u, *** replay buffer vide ***",
+                                      writePtr, replayPtr, replayBuffLen);
+    return thisEvent; // événement vide
+  }
+  thisEvent = eventBuffer[replayPtr];
+  replayPtr = (replayPtr + 1) % buffSize; // increment replay pointer
+  if ((writePtr - replayPtr) < 0){
+      replayBuffLen = writePtr - replayPtr + buffSize;
+  } else {
+      replayBuffLen = writePtr - replayPtr;
+  }
+
+  //pour debug
+  Serial.print("<------- " + DomainName + DeptName + eventName[thisEvent.namePtr]);
+  Serial.printlnf(": readEvent:: writePtr= %u, replayPtr= %u, replayBuffLen= %u, noSerie: %u, eData: %u, timer: %u",
+                                    writePtr, replayPtr, replayBuffLen, thisEvent.noSerie, thisEvent.eData, thisEvent.timer);
+  return thisEvent;
+}
+
+// Lecture d'un événement en mémoire sans avancé le pointeur
+struct Event peekEvent(uint16_t peekReadPtr){
+  struct Event thisEvent = {};
+  if (peekReadPtr == writePtr){
+    Serial.printlnf(" ------- peekEvent:: writePtr= %u, peekReadPtr= %u, buffLen= %u, *** buffer vide ***",
+                                      writePtr, peekReadPtr, buffLen);
+    return thisEvent; // événement vide
+  }
+  thisEvent = eventBuffer[peekReadPtr];
+   //pour debug
+  Serial.print(" ------- " + eventName[thisEvent.namePtr]);
+  Serial.printlnf(": peekEvent:: writePtr= %u, readPtr= %u, buffLen= %u, noSerie: %u, eData: %u, timer: %u",
+                                    writePtr, peekReadPtr, buffLen, thisEvent.noSerie, thisEvent.eData, thisEvent.timer);
+  return thisEvent;
 }
 
 /*
@@ -1101,90 +1185,6 @@ int replayEvent(String command){
   } else {
     return -1;
   }
-}
-
-// Sauvegarde d'un événement en mémoire
-bool writeEvent(struct Event thisEvent){
-  if (readPtr == (writePtr + 1) % buffSize){
-    return false; // Le buffer est plein, ne rien sauver.
-  }
-  eventBuffer[writePtr] = thisEvent;
-  writePtr = (writePtr + 1) % buffSize; // avancer writePtr
-  if ((writePtr - readPtr) < 0){
-      buffLen = writePtr - readPtr + buffSize;
-  } else {
-      buffLen = writePtr - readPtr;
-  }
-  if (savedEventCount < buffSize) { // increment the number of saved events up until buffer length
-    savedEventCount++;
-
-  } // Number of stored events in the buffer.
-   //pour debug
-  Serial.print("W------> " + DomainName + DeptName + eventName[thisEvent.namePtr]);
-  Serial.printlnf(": writeEvent:: writePtr= %u, readPtr= %u, buffLen= %u, noSerie: %u, eData: %u, timer: %u",
-                                     writePtr, readPtr, buffLen, thisEvent.noSerie, thisEvent.eData, thisEvent.timer);
-  return true;
-}
-
-// Lecture d'un événement en mémoire
-struct Event readEvent(){
-  struct Event thisEvent = {};
-  if (readPtr == writePtr){
-    Serial.printlnf("<------- readEvent:: writePtr= %u, readPtr= %u, buffLen= %u, *** buffer vide ***",
-                                      writePtr, readPtr, buffLen);
-    return thisEvent; // événement vide
-  }
-  thisEvent = eventBuffer[readPtr];
-  readPtr = (readPtr + 1) % buffSize;
-  if ((writePtr - readPtr) < 0){
-      buffLen = writePtr - readPtr + buffSize;
-  } else {
-      buffLen = writePtr - readPtr;
-  }
-  //pour debug
-  Serial.print("<R------ " + DomainName + DeptName + eventName[thisEvent.namePtr]);
-  Serial.printlnf(": readEvent:: writePtr= %u, readPtr= %u, buffLen= %u, noSerie: %u, eData: %u, timer: %u",
-                                    writePtr, readPtr, buffLen, thisEvent.noSerie, thisEvent.eData, thisEvent.timer);
-  return thisEvent;
-}
-
-// Re-lecture d'un événement en mémoire
-struct Event replayReadEvent(){
-  struct Event thisEvent = {};
-  if (replayPtr == writePtr){
-    Serial.printlnf("\n<--&&--- replayReadEvent:: writePtr= %u, replayPtr= %u, replayBuffLen= %u, *** replay buffer vide ***",
-                                      writePtr, replayPtr, replayBuffLen);
-    return thisEvent; // événement vide
-  }
-  thisEvent = eventBuffer[replayPtr];
-  replayPtr = (replayPtr + 1) % buffSize; // increment replay pointer
-  if ((writePtr - replayPtr) < 0){
-      replayBuffLen = writePtr - replayPtr + buffSize;
-  } else {
-      replayBuffLen = writePtr - replayPtr;
-  }
-
-  //pour debug
-  Serial.print("<------- " + DomainName + DeptName + eventName[thisEvent.namePtr]);
-  Serial.printlnf(": readEvent:: writePtr= %u, replayPtr= %u, replayBuffLen= %u, noSerie: %u, eData: %u, timer: %u",
-                                    writePtr, replayPtr, replayBuffLen, thisEvent.noSerie, thisEvent.eData, thisEvent.timer);
-  return thisEvent;
-}
-
-// Lecture d'un événement en mémoire sans avancé le pointeur
-struct Event peekEvent(uint16_t peekReadPtr){
-  struct Event thisEvent = {};
-  if (peekReadPtr == writePtr){
-    Serial.printlnf(" ------- peekEvent:: writePtr= %u, peekReadPtr= %u, buffLen= %u, *** buffer vide ***",
-                                      writePtr, peekReadPtr, buffLen);
-    return thisEvent; // événement vide
-  }
-  thisEvent = eventBuffer[peekReadPtr];
-   //pour debug
-  Serial.print(" ------- " + eventName[thisEvent.namePtr]);
-  Serial.printlnf(": peekEvent:: writePtr= %u, readPtr= %u, buffLen= %u, noSerie: %u, eData: %u, timer: %u",
-                                    writePtr, peekReadPtr, buffLen, thisEvent.noSerie, thisEvent.eData, thisEvent.timer);
-  return thisEvent;
 }
 
 // check buffer pointers and length consistency
